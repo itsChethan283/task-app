@@ -58,6 +58,21 @@ Notes:
 - `/login` for sign in / sign up
 - `/tasks` for Daily/Open task management
 
+## Install as an app (PWA)
+
+After deployment, users can install DailyTracker like an app:
+
+- Android (Chrome): open site -> menu -> Install app
+- Desktop (Chrome/Edge): click install icon in address bar
+- iPhone (Safari): Share -> Add to Home Screen
+
+PWA files used:
+
+- `public/manifest.webmanifest`
+- `public/sw.js`
+- `public/icons/icon-192.png`
+- `public/icons/icon-512.png`
+
 ## Stack
 
 - Next.js App Router
