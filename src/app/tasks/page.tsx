@@ -277,7 +277,7 @@ export default function TasksPage() {
       <section className="mx-auto max-w-7xl">
         <header className="mb-12 flex flex-wrap items-start justify-between gap-6">
           <div>
-            <h1 className={`header-title text-5xl font-bold ${shellText}`}>DailyTracker</h1>
+            <h1 className={`header-title text-5xl font-bold ${shellText}`}>Tasks</h1>
             <p className={`mt-2 text-lg ${mutedText}`}>Welcome, {username}</p>
             <p className={`mt-4 text-sm ${isDarkMode ? "text-slate-500" : "text-slate-400"}`}>
               Use #, ##, ### or more at task start to mark priority.
