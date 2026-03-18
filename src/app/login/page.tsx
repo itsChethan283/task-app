@@ -115,7 +115,7 @@ export default function LoginPage() {
   return (
     <main className="flex min-h-screen items-center justify-center px-4 py-10">
       <section className={`w-full max-w-md rounded-2xl border p-6 shadow-xl ${cardClass}`}>
-        <h1 className="header-title text-center text-4xl font-bold">DailyTracker</h1>
+        <h1 className="header-title text-center text-4xl font-bold">Tasks</h1>
         <p className={`mt-2 text-center text-sm ${mutedText}`}>
           {isSignUp ? "Create an account" : "Sign in to your account"}
         </p>
