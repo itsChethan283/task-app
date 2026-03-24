@@ -14,6 +14,14 @@ type Task = {
   created_at: string;
 };
 
+type TaskComment = {
+  id: string;
+  task_id: string;
+  user_id: string;
+  content: string;
+  created_at: string;
+};
+
 type UserState = {
   id: string;
   email: string | null;
@@ -25,8 +33,14 @@ export default function TasksPage() {
   const [user, setUser] = useState<UserState | null>(null);
   const [username, setUsername] = useState("");
   const [tasks, setTasks] = useState<Task[]>([]);
+  const [taskComments, setTaskComments] = useState<TaskComment[]>([]);
   const [dailyInput, setDailyInput] = useState("");
-  const [openInput, setOpenInput] = useState("");
+  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
+  const [currentCommentInput, setCurrentCommentInput] = useState("");
+  const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
+  const [editingTaskInput, setEditingTaskInput] = useState("");
+  const [editingCommentId, setEditingCommentId] = useState<string | null>(null);
+  const [editingCommentInput, setEditingCommentInput] = useState("");
   const [isDarkMode, setIsDarkMode] = useState(() => {
     if (typeof window === "undefined") {
       return false;
@@ -70,6 +84,18 @@ export default function TasksPage() {
         setTasks((data as Task[] | null) ?? []);
       }
 
+      const { data: commentsData, error: commentsError } = await supabase
+        .from("task_comments")
+        .select("id, task_id, user_id, content, created_at")
+        .eq("user_id", session.user.id)
+        .order("created_at", { ascending: false });
+
+      if (commentsError) {
+        setError(commentsError.message);
+      } else {
+        setTaskComments((commentsData as TaskComment[] | null) ?? []);
+      }
+
       setIsLoading(false);
     };
 
@@ -84,13 +110,12 @@ export default function TasksPage() {
     return { title, importance };
   };
 
-  const addTask = async (category: "daily" | "open") => {
+  const addTask = async () => {
     if (!user) {
       return;
     }
 
-    const inputValue = category === "daily" ? dailyInput : openInput;
-    const { title, importance } = parseTaskInput(inputValue);
+    const { title, importance } = parseTaskInput(dailyInput);
 
     if (!title) {
       return;
@@ -100,7 +125,7 @@ export default function TasksPage() {
 
     const { data, error: createError } = await supabase
       .from("tasks")
-      .insert({ title, user_id: user.id, category, importance })
+      .insert({ title, user_id: user.id, category: "daily", importance })
       .select("id, user_id, title, category, importance, is_complete, created_at")
       .single();
 
@@ -110,12 +135,110 @@ export default function TasksPage() {
     }
 
     setTasks((current) => [data as Task, ...current]);
+    setDailyInput("");
+  };
 
-    if (category === "daily") {
-      setDailyInput("");
-    } else {
-      setOpenInput("");
+  const addComment = async (taskId: string) => {
+    if (!user) {
+      return;
     }
+
+    const content = currentCommentInput.trim();
+    if (!content) {
+      return;
+    }
+
+    setError(null);
+
+    const { data, error: createError } = await supabase
+      .from("task_comments")
+      .insert({ task_id: taskId, user_id: user.id, content })
+      .select("id, task_id, user_id, content, created_at")
+      .single();
+
+    if (createError) {
+      setError(createError.message);
+      return;
+    }
+
+    setTaskComments((current) => [data as TaskComment, ...current]);
+    setCurrentCommentInput("");
+  };
+
+  const startTaskEdit = (task: Task) => {
+    setEditingTaskId(task.id);
+    const prefix = task.importance && task.importance > 0 ? "#".repeat(Math.min(task.importance, 5)) + " " : "";
+    setEditingTaskInput(prefix + task.title);
+  };
+
+  const cancelTaskEdit = () => {
+    setEditingTaskId(null);
+    setEditingTaskInput("");
+  };
+
+  const saveTaskEdit = async (taskId: string) => {
+    const { title, importance } = parseTaskInput(editingTaskInput);
+    if (!title) return;
+
+    setError(null);
+    const { error: updateError } = await supabase
+      .from("tasks")
+      .update({ title, importance })
+      .eq("id", taskId);
+
+    if (updateError) {
+      setError(updateError.message);
+      return;
+    }
+
+    setTasks((current) => current.map((t) => (t.id === taskId ? { ...t, title, importance } : t)));
+    cancelTaskEdit();
+  };
+
+  const handleTaskEditEnter = (event: KeyboardEvent<HTMLInputElement>, taskId: string) => {
+    if (event.key !== "Enter") return;
+    event.preventDefault();
+    void saveTaskEdit(taskId);
+  };
+
+  const startCommentEdit = (comment: TaskComment) => {
+    setEditingCommentId(comment.id);
+    setEditingCommentInput(comment.content);
+  };
+
+  const cancelCommentEdit = () => {
+    setEditingCommentId(null);
+    setEditingCommentInput("");
+  };
+
+  const saveCommentEdit = async (commentId: string) => {
+    const content = editingCommentInput.trim();
+    if (!content) return;
+
+    setError(null);
+    const { error: updateError } = await supabase
+      .from("task_comments")
+      .update({ content })
+      .eq("id", commentId);
+
+    if (updateError) {
+      setError(updateError.message);
+      return;
+    }
+
+    setTaskComments((current) => current.map((c) => (c.id === commentId ? { ...c, content } : c)));
+    cancelCommentEdit();
+  };
+
+  const removeComment = async (commentId: string) => {
+    setError(null);
+    const { error: deleteError } = await supabase.from("task_comments").delete().eq("id", commentId);
+    if (deleteError) {
+      setError(deleteError.message);
+      return;
+    }
+    setTaskComments((current) => current.filter((c) => c.id !== commentId));
+    if (editingCommentId === commentId) cancelCommentEdit();
   };
 
   const toggleTask = async (task: Task) => {
@@ -149,6 +272,11 @@ export default function TasksPage() {
     }
 
     setTasks((current) => current.filter((task) => task.id !== taskId));
+    setTaskComments((current) => current.filter((comment) => comment.task_id !== taskId));
+    if (selectedTaskId === taskId) {
+      setSelectedTaskId(null);
+      setCurrentCommentInput("");
+    }
   };
 
   const handleSignOut = async () => {
@@ -206,14 +334,29 @@ export default function TasksPage() {
           <button
             type="button"
             onClick={() => toggleTask(task)}
-            className="flex flex-1 items-start gap-3 text-left"
+            className={`mt-0.5 text-3xl w-12 h-12 flex items-center justify-center rounded-full transition ${dotClass}`}
             aria-label="Toggle task"
           >
-            <span className={`mt-0.5 text-lg transition ${dotClass}`}>
-              ○
-            </span>
+            ○
+          </button>
 
-            <span className="min-w-0 flex-1">
+          {editingTaskId === task.id ? (
+            <div className="flex-1">
+              <input
+                type="text"
+                value={editingTaskInput}
+                onChange={(e) => setEditingTaskInput(e.target.value)}
+                onKeyDown={(e) => handleTaskEditEnter(e, task.id)}
+                className={`w-full rounded-lg border px-3 py-2 text-sm outline-none ${inputClass}`}
+              />
+              <p className={`mt-2 text-xs ${mutedText}`}>Use # at start to update priority.</p>
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setSelectedTaskId(selectedTaskId === task.id ? null : task.id)}
+              className="min-w-0 flex-1 text-left"
+            >
               <span className={`block break-words ${getTaskTextClass(task)} ${getTaskWeightClass(task)}`}>
                 {task.title}
               </span>
@@ -224,17 +367,48 @@ export default function TasksPage() {
                   ))}
                 </span>
               ) : null}
-            </span>
-          </button>
+            </button>
+          )}
 
-          <button
-            type="button"
-            onClick={() => removeTask(task.id)}
-            className={`text-sm transition ${deleteClass}`}
-            aria-label="Delete task"
-          >
-            Delete
-          </button>
+          <div className="flex items-center gap-3 pt-0.5">
+            {editingTaskId === task.id ? (
+              <>
+                <button
+                  type="button"
+                  onClick={() => saveTaskEdit(task.id)}
+                  className={isDarkMode ? "text-sm text-emerald-400 transition hover:text-emerald-300" : "text-sm text-emerald-600 transition hover:text-emerald-500"}
+                >
+                  Save
+                </button>
+                <button
+                  type="button"
+                  onClick={cancelTaskEdit}
+                  className={isDarkMode ? "text-sm text-slate-400 transition hover:text-slate-300" : "text-sm text-slate-500 transition hover:text-slate-400"}
+                >
+                  Cancel
+                </button>
+              </>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  onClick={() => startTaskEdit(task)}
+                  className={isDarkMode ? "text-sm text-cyan-400 transition hover:text-cyan-300" : "text-sm text-cyan-600 transition hover:text-cyan-500"}
+                  aria-label="Edit task"
+                >
+                  Edit
+                </button>
+                <button
+                  type="button"
+                  onClick={() => removeTask(task.id)}
+                  className={`text-sm transition ${deleteClass}`}
+                  aria-label="Delete task"
+                >
+                  Delete
+                </button>
+              </>
+            )}
+          </div>
         </div>
       </li>
     );
@@ -242,18 +416,37 @@ export default function TasksPage() {
 
   const handleEnter = (
     event: KeyboardEvent<HTMLInputElement>,
-    category: "daily" | "open",
   ) => {
     if (event.key !== "Enter") {
       return;
     }
 
     event.preventDefault();
-    void addTask(category);
+    void addTask();
+  };
+
+  const handleCommentEnter = (
+    event: KeyboardEvent<HTMLInputElement>,
+    taskId: string,
+  ) => {
+    if (event.key !== "Enter") {
+      return;
+    }
+
+    event.preventDefault();
+    void addComment(taskId);
   };
 
   const dailyTasks = getSortedTasks(tasks.filter((task) => task.category === "daily"));
-  const openTasks = getSortedTasks(tasks.filter((task) => task.category === "open"));
+  const selectedTask = selectedTaskId ? dailyTasks.find((t) => t.id === selectedTaskId) ?? null : null;
+  const commentsByTask = taskComments.reduce<Record<string, TaskComment[]>>((acc, comment) => {
+    if (!acc[comment.task_id]) {
+      acc[comment.task_id] = [];
+    }
+    acc[comment.task_id].push(comment);
+    return acc;
+  }, {});
+  const commentsCount = taskComments.length;
   const completedCount = tasks.filter((task) => task.is_complete).length;
   const priorityCount = tasks.filter((task) => task.importance > 0).length;
 
@@ -310,8 +503,8 @@ export default function TasksPage() {
                   <p className={`text-xs ${mutedText}`}>Daily</p>
                 </div>
                 <div className={`min-w-[90px] rounded-lg border p-3 text-center ${panelClass}`}>
-                  <p className="text-2xl font-bold text-purple-500">{openTasks.length}</p>
-                  <p className={`text-xs ${mutedText}`}>Open</p>
+                  <p className="text-2xl font-bold text-cyan-500">{commentsCount}</p>
+                  <p className={`text-xs ${mutedText}`}>Comments</p>
                 </div>
                 <div className={`min-w-[90px] rounded-lg border p-3 text-center ${panelClass}`}>
                   <p className="text-2xl font-bold text-emerald-500">{completedCount}</p>
@@ -332,8 +525,8 @@ export default function TasksPage() {
           </p>
         ) : null}
 
-        <div className="grid gap-8 md:grid-cols-2">
-          <section className="flex flex-col gap-4">
+        <div className="grid gap-8 md:grid-cols-3">
+          <section className="flex flex-col gap-4 md:col-span-2">
             <h2 className={`flex items-center gap-2 text-2xl font-bold ${shellText}`}>
               <span className="h-8 w-1 rounded bg-blue-500" />Daily Tasks
             </h2>
@@ -343,13 +536,13 @@ export default function TasksPage() {
                 type="text"
                 value={dailyInput}
                 onChange={(event) => setDailyInput(event.target.value)}
-                onKeyDown={(event) => handleEnter(event, "daily")}
+                onKeyDown={handleEnter}
                 placeholder="Add a daily task..."
                 className={`w-full rounded-lg border px-3 py-3 outline-none ${inputClass}`}
               />
               <button
                 type="button"
-                onClick={() => addTask("daily")}
+                onClick={() => addTask()}
                 className="rounded-lg bg-blue-500 px-4 py-2 text-sm font-semibold text-white"
               >
                 Add
@@ -365,34 +558,102 @@ export default function TasksPage() {
             </ul>
           </section>
 
-          <section className="flex flex-col gap-4">
+          <section className="flex flex-col gap-4 md:col-span-1">
             <h2 className={`flex items-center gap-2 text-2xl font-bold ${shellText}`}>
-              <span className="h-8 w-1 rounded bg-purple-500" />Open Tasks
+              <span className="h-8 w-1 rounded bg-cyan-500" />Comments
             </h2>
 
-            <div className="flex gap-2">
-              <input
-                type="text"
-                value={openInput}
-                onChange={(event) => setOpenInput(event.target.value)}
-                onKeyDown={(event) => handleEnter(event, "open")}
-                placeholder="Add an open task..."
-                className={`w-full rounded-lg border px-3 py-3 outline-none ${inputClass}`}
-              />
-              <button
-                type="button"
-                onClick={() => addTask("open")}
-                className="rounded-lg bg-purple-500 px-4 py-2 text-sm font-semibold text-white"
-              >
-                Add
-              </button>
-            </div>
-
             <ul className="max-h-[70vh] space-y-3 overflow-y-auto pr-1">
-              {openTasks.length === 0 ? (
-                <li className={`py-12 text-center text-lg ${mutedText}`}>No open tasks yet</li>
+              {dailyTasks.length === 0 ? (
+                <li className={`py-12 text-center text-lg ${mutedText}`}>Add daily tasks to write comments</li>
+              ) : selectedTask == null ? (
+                <li className={`py-12 text-center text-lg ${mutedText}`}>Click a task to view and add comments</li>
               ) : (
-                openTasks.map((task) => renderTaskRow(task))
+                <li key={`comments-${selectedTask.id}`} className={`rounded-lg border p-4 ${panelClass}`}>
+                  <p className={`text-sm font-semibold ${shellText}`}>{selectedTask.title}</p>
+
+                  <div className="mt-3 flex gap-2">
+                    <input
+                      type="text"
+                      value={currentCommentInput}
+                      onChange={(event) => setCurrentCommentInput(event.target.value)}
+                      onKeyDown={(event) => handleCommentEnter(event, selectedTask.id)}
+                      placeholder="Add a comment..."
+                      className={`w-full rounded-lg border px-3 py-2 text-sm outline-none ${inputClass}`}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => addComment(selectedTask.id)}
+                      className="rounded-lg bg-cyan-500 px-3 py-2 text-xs font-semibold text-white"
+                    >
+                      Add
+                    </button>
+                  </div>
+
+                  <ul className="mt-3 space-y-2">
+                    {(commentsByTask[selectedTask.id] ?? []).length === 0 ? (
+                      <li className={`text-xs ${mutedText}`}>No comments yet</li>
+                    ) : (
+                      (commentsByTask[selectedTask.id] ?? []).map((comment) => (
+                        <li
+                          key={comment.id}
+                          className={`rounded-md border px-3 py-2 text-sm ${isDarkMode ? "border-slate-700 bg-slate-900/70 text-slate-200" : "border-slate-200 bg-slate-50 text-slate-700"}`}
+                        >
+                          {editingCommentId === comment.id ? (
+                            <div>
+                              <input
+                                type="text"
+                                value={editingCommentInput}
+                                onChange={(e) => setEditingCommentInput(e.target.value)}
+                                onKeyDown={(e) => handleCommentEditEnter(e, comment.id)}
+                                className={`w-full rounded-lg border px-3 py-2 text-sm outline-none ${inputClass}`}
+                              />
+                              <div className="mt-2 flex items-center gap-3">
+                                <button
+                                  type="button"
+                                  onClick={() => saveCommentEdit(comment.id)}
+                                  className={isDarkMode ? "text-xs font-semibold text-emerald-400 transition hover:text-emerald-300" : "text-xs font-semibold text-emerald-600 transition hover:text-emerald-500"}
+                                >
+                                  Save
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={cancelCommentEdit}
+                                  className={isDarkMode ? "text-xs font-semibold text-slate-400 transition hover:text-slate-300" : "text-xs font-semibold text-slate-500 transition hover:text-slate-400"}
+                                >
+                                  Cancel
+                                </button>
+                              </div>
+                            </div>
+                          ) : (
+                            <>
+                              <p className="break-words">{comment.content}</p>
+                              <div className="mt-2 flex items-center justify-between gap-2">
+                                <p className={`text-[11px] ${mutedText}`}>{new Date(comment.created_at).toLocaleString()}</p>
+                                <div className="flex items-center gap-3">
+                                  <button
+                                    type="button"
+                                    onClick={() => startCommentEdit(comment)}
+                                    className={isDarkMode ? "text-xs font-semibold text-cyan-400 transition hover:text-cyan-300" : "text-xs font-semibold text-cyan-600 transition hover:text-cyan-500"}
+                                  >
+                                    Edit
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => removeComment(comment.id)}
+                                    className={isDarkMode ? "text-xs font-semibold text-red-400 transition hover:text-red-300" : "text-xs font-semibold text-red-500 transition hover:text-red-400"}
+                                  >
+                                    Delete
+                                  </button>
+                                </div>
+                              </div>
+                            </>
+                          )}
+                        </li>
+                      ))
+                    )}
+                  </ul>
+                </li>
               )}
             </ul>
           </section>
