@@ -201,6 +201,12 @@ export default function TasksPage() {
     void saveTaskEdit(taskId);
   };
 
+  const handleCommentEditEnter = (event: KeyboardEvent<HTMLInputElement>, commentId: string) => {
+    if (event.key !== "Enter") return;
+    event.preventDefault();
+    void saveCommentEdit(commentId);
+  };
+
   const startCommentEdit = (comment: TaskComment) => {
     setEditingCommentId(comment.id);
     setEditingCommentInput(comment.content);
