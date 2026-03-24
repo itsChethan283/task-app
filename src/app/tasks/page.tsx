@@ -534,7 +534,7 @@ export default function TasksPage() {
         <div className="grid gap-8 md:grid-cols-3">
           <section className="flex flex-col gap-4 md:col-span-2">
             <h2 className={`flex items-center gap-2 text-2xl font-bold ${shellText}`}>
-              <span className="h-8 w-1 rounded bg-blue-500" />Daily Tasks
+              <span className="h-8 w-1 rounded bg-blue-500" />Tasks
             </h2>
 
             <div className="flex gap-2">
