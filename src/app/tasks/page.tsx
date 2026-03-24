@@ -1,6 +1,6 @@
 "use client";
 
-import { KeyboardEvent, useEffect, useMemo, useState } from "react";
+import { KeyboardEvent, MouseEvent, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 
@@ -207,6 +207,14 @@ export default function TasksPage() {
     void saveCommentEdit(commentId);
   };
 
+  const handleTaskCardClick = (event: MouseEvent<HTMLElement>, taskId: string) => {
+    const target = event.target as HTMLElement | null;
+    if (!target) return;
+    // Ignore clicks originating from interactive controls (buttons, inputs, links)
+    if (target.closest("button") || target.closest("input") || target.closest("a")) return;
+    setSelectedTaskId(selectedTaskId === taskId ? null : taskId);
+  };
+
   const startCommentEdit = (comment: TaskComment) => {
     setEditingCommentId(comment.id);
     setEditingCommentInput(comment.content);
@@ -336,7 +344,10 @@ export default function TasksPage() {
         key={task.id}
         className={`rounded-lg border-l-4 border-l-blue-500 px-4 py-3 transition hover:translate-x-1 ${cardClass}`}
       >
-        <div className="flex items-start gap-3">
+        <div
+          className="flex items-start gap-3"
+          onClick={(e) => handleTaskCardClick(e, task.id)}
+        >
           <button
             type="button"
             onClick={() => toggleTask(task)}
@@ -358,11 +369,7 @@ export default function TasksPage() {
               <p className={`mt-2 text-xs ${mutedText}`}>Use # at start to update priority.</p>
             </div>
           ) : (
-            <button
-              type="button"
-              onClick={() => setSelectedTaskId(selectedTaskId === task.id ? null : task.id)}
-              className="min-w-0 flex-1 text-left"
-            >
+            <div className="min-w-0 flex-1 text-left">
               <span className={`block break-words ${getTaskTextClass(task)} ${getTaskWeightClass(task)}`}>
                 {task.title}
               </span>
@@ -373,7 +380,7 @@ export default function TasksPage() {
                   ))}
                 </span>
               ) : null}
-            </button>
+            </div>
           )}
 
           <div className="flex items-center gap-3 pt-0.5">
