@@ -1,6 +1,6 @@
 "use client";
 
-import { KeyboardEvent, MouseEvent, useEffect, useMemo, useState } from "react";
+import { KeyboardEvent, MouseEvent, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 
@@ -11,6 +11,15 @@ type Task = {
   category: "daily" | "open";
   importance: number;
   is_complete: boolean;
+  created_at: string;
+  group_id: string | null;
+};
+
+type TaskGroup = {
+  id: string;
+  user_id: string;
+  title: string;
+  position: number;
   created_at: string;
 };
 
@@ -47,8 +56,33 @@ export default function TasksPage() {
     }
     return localStorage.getItem("darkMode") === "true";
   });
+  const [groups, setGroups] = useState<TaskGroup[]>([]);
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
+  const [showGroupInput, setShowGroupInput] = useState(false);
+  const [groupInput, setGroupInput] = useState("");
+  const [groupTaskInputs, setGroupTaskInputs] = useState<Record<string, string>>({});
+  const [editingGroupId, setEditingGroupId] = useState<string | null>(null);
+  const [editingGroupInput, setEditingGroupInput] = useState("");
+  const [dragGroupId, setDragGroupId] = useState<string | null>(null);
+  const [dragOverGroupId, setDragOverGroupId] = useState<string | null>(null);
+  const [dragTaskId, setDragTaskId] = useState<string | null>(null);
+  const [dragTaskOverTarget, setDragTaskOverTarget] = useState<string | null>(null); // groupId or "ungrouped"
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const groupInputRef = useRef<HTMLInputElement>(null);
+  const taskInputRef = useRef<HTMLInputElement>(null);
+  const editingTaskInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    const id = setTimeout(() => {
+      if (showGroupInput) {
+        groupInputRef.current?.focus();
+      } else {
+        taskInputRef.current?.focus();
+      }
+    }, 0);
+    return () => clearTimeout(id);
+  }, [showGroupInput]);
 
   useEffect(() => {
     document.body.classList.remove("light-mode", "dark-mode");
@@ -74,7 +108,7 @@ export default function TasksPage() {
 
       const { data, error: taskError } = await supabase
         .from("tasks")
-        .select("id, user_id, title, category, importance, is_complete, created_at")
+        .select("id, user_id, title, category, importance, is_complete, created_at, group_id")
         .eq("user_id", session.user.id)
         .order("created_at", { ascending: false });
 
@@ -94,6 +128,19 @@ export default function TasksPage() {
         setError(commentsError.message);
       } else {
         setTaskComments((commentsData as TaskComment[] | null) ?? []);
+      }
+
+      const { data: groupsData, error: groupsError } = await supabase
+        .from("task_groups")
+        .select("id, user_id, title, position, created_at")
+        .eq("user_id", session.user.id)
+        .order("position", { ascending: true })
+        .order("created_at", { ascending: true });
+
+      if (groupsError) {
+        setError(groupsError.message);
+      } else {
+        setGroups((groupsData as TaskGroup[] | null) ?? []);
       }
 
       setIsLoading(false);
@@ -125,8 +172,8 @@ export default function TasksPage() {
 
     const { data, error: createError } = await supabase
       .from("tasks")
-      .insert({ title, user_id: user.id, category: "daily", importance })
-      .select("id, user_id, title, category, importance, is_complete, created_at")
+      .insert({ title, user_id: user.id, category: "daily", importance, group_id: null })
+      .select("id, user_id, title, category, importance, is_complete, created_at, group_id")
       .single();
 
     if (createError) {
@@ -169,6 +216,7 @@ export default function TasksPage() {
     setEditingTaskId(task.id);
     const prefix = task.importance && task.importance > 0 ? "#".repeat(Math.min(task.importance, 5)) + " " : "";
     setEditingTaskInput(prefix + task.title);
+    setTimeout(() => editingTaskInputRef.current?.focus(), 0);
   };
 
   const cancelTaskEdit = () => {
@@ -298,6 +346,166 @@ export default function TasksPage() {
     router.replace("/login");
   };
 
+  const createGroup = async () => {
+    if (!user) return;
+    const title = groupInput.trim();
+    if (!title) return;
+    setError(null);
+    const nextPosition = groups.length > 0 ? Math.max(...groups.map((g) => g.position)) + 1 : 0;
+    const { data, error: createError } = await supabase
+      .from("task_groups")
+      .insert({ title, user_id: user.id, position: nextPosition })
+      .select("id, user_id, title, position, created_at")
+      .single();
+    if (createError) { setError(createError.message); return; }
+    setGroups((current) => [...current, data as TaskGroup]);
+    setGroupInput("");
+    setShowGroupInput(false);
+  };
+
+  const removeGroup = async (groupId: string) => {
+    setError(null);
+    const { error: deleteError } = await supabase.from("task_groups").delete().eq("id", groupId);
+    if (deleteError) { setError(deleteError.message); return; }
+    setGroups((current) => current.filter((g) => g.id !== groupId));
+    // Mark all tasks in the group as complete and ungroup them
+    const groupTaskIds = tasks.filter((t) => t.group_id === groupId).map((t) => t.id);
+    if (groupTaskIds.length > 0) {
+      await supabase.from("tasks").update({ is_complete: true, group_id: null }).in("id", groupTaskIds);
+      setTasks((current) => current.map((t) => groupTaskIds.includes(t.id) ? { ...t, is_complete: true, group_id: null } : t));
+    }
+  };
+
+  const startGroupEdit = (group: TaskGroup) => {
+    setEditingGroupId(group.id);
+    setEditingGroupInput(group.title);
+  };
+
+  const cancelGroupEdit = () => {
+    setEditingGroupId(null);
+    setEditingGroupInput("");
+  };
+
+  const saveGroupEdit = async (groupId: string) => {
+    const title = editingGroupInput.trim();
+    if (!title) return;
+    setError(null);
+    const { error: updateError } = await supabase.from("task_groups").update({ title }).eq("id", groupId);
+    if (updateError) { setError(updateError.message); return; }
+    setGroups((current) => current.map((g) => g.id === groupId ? { ...g, title } : g));
+    cancelGroupEdit();
+  };
+
+  const addGroupTask = async (groupId: string) => {
+    if (!user) return;
+    const inputValue = groupTaskInputs[groupId] ?? "";
+    const { title, importance } = parseTaskInput(inputValue);
+    if (!title) return;
+    setError(null);
+    const { data, error: createError } = await supabase
+      .from("tasks")
+      .insert({ title, user_id: user.id, category: "daily", importance, group_id: groupId })
+      .select("id, user_id, title, category, importance, is_complete, created_at, group_id")
+      .single();
+    if (createError) { setError(createError.message); return; }
+    setTasks((current) => [data as Task, ...current]);
+    setGroupTaskInputs((current) => ({ ...current, [groupId]: "" }));
+  };
+
+  const toggleGroupCollapse = (groupId: string) => {
+    setCollapsedGroups((current) => {
+      const next = new Set(current);
+      if (next.has(groupId)) next.delete(groupId);
+      else next.add(groupId);
+      return next;
+    });
+  };
+
+  const handleGroupEnter = (event: KeyboardEvent<HTMLInputElement>) => {
+    if (event.key !== "Enter") return;
+    event.preventDefault();
+    void createGroup();
+  };
+
+  const handleGroupTaskEnter = (event: KeyboardEvent<HTMLInputElement>, groupId: string) => {
+    if (event.key !== "Enter") return;
+    event.preventDefault();
+    void addGroupTask(groupId);
+  };
+
+  const handleGroupEditEnter = (event: KeyboardEvent<HTMLInputElement>, groupId: string) => {
+    if (event.key !== "Enter") return;
+    event.preventDefault();
+    void saveGroupEdit(groupId);
+  };
+
+  const handleGroupDragStart = (groupId: string) => {
+    setDragGroupId(groupId);
+  };
+
+  const handleGroupDragOver = (event: React.DragEvent, groupId: string) => {
+    event.preventDefault();
+    if (groupId !== dragGroupId) setDragOverGroupId(groupId);
+  };
+
+  const handleGroupDrop = async (targetGroupId: string) => {
+    if (!dragGroupId || dragGroupId === targetGroupId) {
+      setDragGroupId(null);
+      setDragOverGroupId(null);
+      return;
+    }
+    const oldIndex = groups.findIndex((g) => g.id === dragGroupId);
+    const newIndex = groups.findIndex((g) => g.id === targetGroupId);
+    if (oldIndex === -1 || newIndex === -1) return;
+    const reordered = [...groups];
+    const [moved] = reordered.splice(oldIndex, 1);
+    reordered.splice(newIndex, 0, moved);
+    const updated = reordered.map((g, i) => ({ ...g, position: i }));
+    setGroups(updated);
+    setDragGroupId(null);
+    setDragOverGroupId(null);
+    await Promise.all(
+      updated.map((g) => supabase.from("task_groups").update({ position: g.position }).eq("id", g.id))
+    );
+  };
+
+  const handleGroupDragEnd = () => {
+    setDragGroupId(null);
+    setDragOverGroupId(null);
+  };
+
+  const moveTaskToGroup = async (taskId: string, targetGroupId: string | null) => {
+    const task = tasks.find((t) => t.id === taskId);
+    if (!task || task.group_id === targetGroupId) return;
+    setTasks((current) => current.map((t) => t.id === taskId ? { ...t, group_id: targetGroupId } : t));
+    await supabase.from("tasks").update({ group_id: targetGroupId }).eq("id", taskId);
+  };
+
+  const handleTaskDragStart = (event: React.DragEvent, taskId: string) => {
+    event.stopPropagation();
+    setDragTaskId(taskId);
+  };
+
+  const handleTaskDragOver = (event: React.DragEvent, target: string) => {
+    if (!dragTaskId) return;
+    event.preventDefault();
+    event.stopPropagation();
+    setDragTaskOverTarget(target);
+  };
+
+  const handleTaskDrop = (event: React.DragEvent, targetGroupId: string | null) => {
+    event.stopPropagation();
+    if (!dragTaskId) return;
+    void moveTaskToGroup(dragTaskId, targetGroupId);
+    setDragTaskId(null);
+    setDragTaskOverTarget(null);
+  };
+
+  const handleTaskDragEnd = () => {
+    setDragTaskId(null);
+    setDragTaskOverTarget(null);
+  };
+
   const getSortedTasks = (taskList: Task[]) => {
     return [...taskList].sort((first, second) => {
       if (first.is_complete === second.is_complete) {
@@ -339,10 +547,15 @@ export default function TasksPage() {
     const dotClass = task.is_complete ? "text-slate-500" : isDarkMode ? "text-slate-600 hover:text-blue-400" : "text-slate-300 hover:text-blue-500";
     const deleteClass = isDarkMode ? "text-slate-500 hover:text-red-400" : "text-slate-300 hover:text-red-500";
 
+    const isTaskDragging = dragTaskId === task.id;
+
     return (
       <li
         key={task.id}
-        className={`rounded-lg border-l-4 border-l-blue-500 px-4 py-3 transition hover:translate-x-1 ${cardClass}`}
+        draggable
+        onDragStart={(e) => handleTaskDragStart(e, task.id)}
+        onDragEnd={handleTaskDragEnd}
+        className={`rounded-lg border-l-4 border-l-blue-500 px-4 py-3 transition hover:translate-x-1 ${cardClass} ${isTaskDragging ? "opacity-40" : "opacity-100"}`}
       >
         <div
           className="flex items-start gap-3"
@@ -360,6 +573,7 @@ export default function TasksPage() {
           {editingTaskId === task.id ? (
             <div className="flex-1">
               <input
+                ref={editingTaskInputRef}
                 type="text"
                 value={editingTaskInput}
                 onChange={(e) => setEditingTaskInput(e.target.value)}
@@ -451,6 +665,7 @@ export default function TasksPage() {
   };
 
   const dailyTasks = getSortedTasks(tasks.filter((task) => task.category === "daily"));
+  const ungroupedTasks = dailyTasks.filter((t) => t.group_id === null);
   const selectedTask = selectedTaskId ? dailyTasks.find((t) => t.id === selectedTaskId) ?? null : null;
   const commentsByTask = taskComments.reduce<Record<string, TaskComment[]>>((acc, comment) => {
     if (!acc[comment.task_id]) {
@@ -544,31 +759,157 @@ export default function TasksPage() {
               <span className="h-8 w-1 rounded bg-blue-500" />Tasks
             </h2>
 
-            <div className="flex gap-2">
-              <input
-                type="text"
-                value={dailyInput}
-                onChange={(event) => setDailyInput(event.target.value)}
-                onKeyDown={handleEnter}
-                placeholder="Add a daily task..."
-                className={`w-full rounded-lg border px-3 py-3 outline-none ${inputClass}`}
-              />
-              <button
-                type="button"
-                onClick={() => addTask()}
-                className="rounded-lg bg-blue-500 px-4 py-2 text-sm font-semibold text-white"
-              >
-                Add
-              </button>
-            </div>
+            {showGroupInput ? (
+              <div className="flex gap-2">
+                <input
+                  ref={groupInputRef}
+                  type="text"
+                  value={groupInput}
+                  onChange={(e) => setGroupInput(e.target.value)}
+                  onKeyDown={handleGroupEnter}
+                  placeholder="Group name..."
+                  className={`w-full rounded-lg border px-3 py-3 outline-none ${inputClass}`}
+                />
+                <button type="button" onClick={() => createGroup()} className="rounded-lg bg-violet-500 px-4 py-2 text-sm font-semibold text-white">Create</button>
+                <button type="button" onClick={() => { setShowGroupInput(false); setGroupInput(""); }} className={`rounded-lg border px-3 py-2 text-sm ${isDarkMode ? "border-slate-600 text-slate-400" : "border-slate-200 text-slate-500"}`}>Cancel</button>
+              </div>
+            ) : (
+              <div className="flex gap-2">
+                <input
+                  ref={taskInputRef}
+                  type="text"
+                  value={dailyInput}
+                  onChange={(event) => setDailyInput(event.target.value)}
+                  onKeyDown={handleEnter}
+                  placeholder="Add a daily task..."
+                  className={`w-full rounded-lg border px-3 py-3 outline-none ${inputClass}`}
+                />
+                <button
+                  type="button"
+                  onClick={() => addTask()}
+                  className="rounded-lg bg-blue-500 px-4 py-2 text-sm font-semibold text-white"
+                >
+                  Add
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowGroupInput(true)}
+                  className={`rounded-lg border px-4 py-2 text-sm font-semibold transition ${isDarkMode ? "border-slate-600 text-violet-400 hover:border-violet-500 hover:text-violet-300" : "border-slate-200 text-violet-600 hover:border-violet-300 hover:text-violet-500"}`}
+                >
+                  + Group
+                </button>
+              </div>
+            )}
 
             <ul className="max-h-[70vh] space-y-3 overflow-y-auto pr-1">
-              {dailyTasks.length === 0 ? (
-                <li className={`py-12 text-center text-lg ${mutedText}`}>No daily tasks yet</li>
+              {dailyTasks.length === 0 && groups.length === 0 ? (
+                <li className={`py-12 text-center text-lg ${mutedText}`}>No tasks yet</li>
               ) : (
-                dailyTasks.map((task) => renderTaskRow(task))
+                <>
+                  {groups.map((group) => {
+                    const isCollapsed = collapsedGroups.has(group.id);
+                    const groupTasks = getSortedTasks(tasks.filter((t) => t.group_id === group.id));
+                    const isDragging = dragGroupId === group.id;
+                    const isDragOver = dragOverGroupId === group.id;
+                    const groupBorderClass = isDragOver
+                      ? isDarkMode ? "border-violet-500 bg-slate-800/80" : "border-violet-400 bg-slate-50"
+                      : isDarkMode ? "border-slate-600 bg-slate-800/80" : "border-slate-200 bg-slate-50";
+                    const groupHeaderClass = isDarkMode ? "border-slate-600 bg-slate-700/60 hover:bg-slate-700" : "border-slate-200 bg-slate-100 hover:bg-slate-200";
+                    return (
+                      <li
+                        key={group.id}
+                        className={`rounded-lg border ${groupBorderClass} overflow-hidden transition-opacity ${isDragging ? "opacity-40" : "opacity-100"}`}
+                        draggable
+                        onDragStart={() => handleGroupDragStart(group.id)}
+                        onDragOver={(e) => handleGroupDragOver(e, group.id)}
+                        onDrop={() => handleGroupDrop(group.id)}
+                        onDragEnd={handleGroupDragEnd}
+                      >
+                        <div
+                          className={`flex items-center gap-2 px-3 py-2 transition cursor-pointer select-none ${groupHeaderClass}`}
+                          onClick={() => toggleGroupCollapse(group.id)}
+                        >
+                          <span
+                            className={`cursor-grab text-base select-none ${isDarkMode ? "text-slate-600 hover:text-slate-400" : "text-slate-300 hover:text-slate-500"}`}
+                            title="Drag to reorder"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            ⠿
+                          </span>
+                          <span className={`text-sm transition ${isDarkMode ? "text-slate-400" : "text-slate-500"}`}>
+                            {isCollapsed ? "▶" : "▼"}
+                          </span>
+                          {editingGroupId === group.id ? (
+                            <div className="flex flex-1 items-center gap-2" onClick={(e) => e.stopPropagation()}>
+                              <input
+                                type="text"
+                                value={editingGroupInput}
+                                onChange={(e) => setEditingGroupInput(e.target.value)}
+                                onKeyDown={(e) => handleGroupEditEnter(e, group.id)}
+                                className={`flex-1 rounded border px-2 py-1 text-sm outline-none ${inputClass}`}
+                                autoFocus
+                              />
+                              <button type="button" onClick={() => saveGroupEdit(group.id)} className={isDarkMode ? "text-xs text-emerald-400 hover:text-emerald-300" : "text-xs text-emerald-600 hover:text-emerald-500"}>Save</button>
+                              <button type="button" onClick={cancelGroupEdit} className={isDarkMode ? "text-xs text-slate-400 hover:text-slate-300" : "text-xs text-slate-500 hover:text-slate-400"}>Cancel</button>
+                            </div>
+                          ) : (
+                            <>
+                              <span className={`flex-1 text-sm font-semibold ${shellText}`}>{group.title}</span>
+                              <span className={`text-xs ${mutedText}`}>{groupTasks.length} task{groupTasks.length !== 1 ? "s" : ""}</span>
+                              <button type="button" onClick={(e) => { e.stopPropagation(); startGroupEdit(group); }} className={isDarkMode ? "text-xs text-cyan-400 hover:text-cyan-300" : "text-xs text-cyan-600 hover:text-cyan-500"}>Edit</button>
+                              <button type="button" onClick={(e) => { e.stopPropagation(); removeGroup(group.id); }} className={isDarkMode ? "text-xs text-red-400 hover:text-red-300" : "text-xs text-red-500 hover:text-red-400"}>Delete</button>
+                            </>
+                          )}
+                        </div>
+                        {!isCollapsed && (
+                          <div
+                            className={`px-2 pb-2 pt-1 rounded-b-lg transition-colors ${dragTaskOverTarget === group.id ? (isDarkMode ? "bg-violet-900/30" : "bg-violet-50") : ""}`}
+                            onDragOver={(e) => handleTaskDragOver(e, group.id)}
+                            onDrop={(e) => handleTaskDrop(e, group.id)}
+                            onDragLeave={() => setDragTaskOverTarget(null)}
+                          >
+                            <div className="mb-2 flex gap-2">
+                              <input
+                                type="text"
+                                value={groupTaskInputs[group.id] ?? ""}
+                                onChange={(e) => setGroupTaskInputs((current) => ({ ...current, [group.id]: e.target.value }))}
+                                onKeyDown={(e) => handleGroupTaskEnter(e, group.id)}
+                                placeholder="Add a task to this group..."
+                                className={`w-full rounded-lg border px-3 py-2 text-sm outline-none ${inputClass}`}
+                              />
+                              <button
+                                type="button"
+                                onClick={() => addGroupTask(group.id)}
+                                className="rounded-lg bg-blue-500 px-3 py-2 text-xs font-semibold text-white"
+                              >
+                                Add
+                              </button>
+                            </div>
+                            <ul className="space-y-2">
+                              {groupTasks.length === 0 ? (
+                                <li className={`py-4 text-center text-sm ${mutedText}`}>No tasks in this group</li>
+                              ) : (
+                                groupTasks.map((task) => renderTaskRow(task))
+                              )}
+                            </ul>
+                          </div>
+                        )}
+                      </li>
+                    );
+                  })}
+                  <div
+                    className={`space-y-3 rounded-lg p-1 transition-colors ${dragTaskOverTarget === "ungrouped" ? (isDarkMode ? "bg-slate-700/50" : "bg-slate-100") : ""}`}
+                    onDragOver={(e) => handleTaskDragOver(e, "ungrouped")}
+                    onDrop={(e) => handleTaskDrop(e, null)}
+                    onDragLeave={() => setDragTaskOverTarget(null)}
+                  >
+                    {ungroupedTasks.map((task) => renderTaskRow(task))}
+                  </div>
+                </>
               )}
             </ul>
+
+
           </section>
 
           <section className="flex flex-col gap-4 md:col-span-1">
