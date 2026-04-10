@@ -63,6 +63,7 @@ export default function TasksPage() {
   const [groupTaskInputs, setGroupTaskInputs] = useState<Record<string, string>>({});
   const [editingGroupId, setEditingGroupId] = useState<string | null>(null);
   const [editingGroupInput, setEditingGroupInput] = useState("");
+  const [showCompletedTasks, setShowCompletedTasks] = useState(false);
   const [dragGroupId, setDragGroupId] = useState<string | null>(null);
   const [dragOverGroupId, setDragOverGroupId] = useState<string | null>(null);
   const [dragTaskId, setDragTaskId] = useState<string | null>(null);
@@ -665,7 +666,10 @@ export default function TasksPage() {
   };
 
   const dailyTasks = getSortedTasks(tasks.filter((task) => task.category === "daily"));
-  const ungroupedTasks = dailyTasks.filter((t) => t.group_id === null);
+  const incompleteDailyTasks = dailyTasks.filter((t) => !t.is_complete);
+  const completedDailyTasks = dailyTasks.filter((t) => t.is_complete);
+  const ungroupedIncompleteTasks = incompleteDailyTasks.filter((t) => t.group_id === null);
+  const ungroupedCompletedTasks = completedDailyTasks.filter((t) => t.group_id === null);
   const selectedTask = selectedTaskId ? dailyTasks.find((t) => t.id === selectedTaskId) ?? null : null;
   const commentsByTask = taskComments.reduce<Record<string, TaskComment[]>>((acc, comment) => {
     if (!acc[comment.task_id]) {
@@ -677,6 +681,7 @@ export default function TasksPage() {
   const commentsCount = taskComments.length;
   const completedCount = tasks.filter((task) => task.is_complete).length;
   const priorityCount = tasks.filter((task) => task.importance > 0).length;
+  const hasIncompleteInGroups = groups.some((g) => tasks.some((t) => t.group_id === g.id && !t.is_complete));
 
   const shellText = isDarkMode ? "text-slate-100" : "text-slate-900";
   const mutedText = isDarkMode ? "text-slate-400" : "text-slate-500";
@@ -696,39 +701,22 @@ export default function TasksPage() {
   return (
     <main className="min-h-screen p-8">
       <section className="mx-auto max-w-7xl">
-        <header className="mb-12 flex flex-wrap items-start justify-between gap-6">
-          <div>
-            <h1 className={`header-title text-5xl font-bold ${shellText}`}>Tasks</h1>
-            <p className={`mt-2 text-lg ${mutedText}`}>Welcome, {username}</p>
-            <p className={`mt-4 text-sm ${isDarkMode ? "text-slate-500" : "text-slate-400"}`}>
-              Use #, ##, ### or more at task start to mark priority.
-            </p>
-            <p className={`text-sm ${isDarkMode ? "text-slate-500" : "text-slate-400"}`}>
-              Signed in as {user?.email}
-            </p>
-          </div>
-
-          <div className="flex flex-col items-end gap-4">
-            <div className="flex gap-2">
-              <button
-                onClick={() => setIsDarkMode((current) => !current)}
-                className={`rounded-lg border px-3 py-2 text-sm font-semibold ${isDarkMode ? "border-slate-600 text-amber-300" : "border-slate-200 text-amber-500"}`}
-              >
-                {isDarkMode ? "☀️" : "🌙"}
-              </button>
-              <button
-                onClick={handleSignOut}
-                className="rounded-lg bg-red-500 px-4 py-2 text-sm font-semibold text-white"
-              >
-                Logout
-              </button>
+        <header className="mb-6 flex flex-wrap items-start justify-between gap-4">
+          <div className="flex items-center gap-6">
+            <div>
+              <h1 className={`header-title text-5xl font-bold ${shellText}`}>Tasks</h1>
+              <p className={`mt-1 text-lg ${mutedText}`}>Welcome, {username}</p>
+              <p className={`mt-0 text-sm ${isDarkMode ? "text-slate-500" : "text-slate-400"}`}>
+                <span className="mr-3">Use #, ##, ### or more at task start to mark priority.</span>
+                <span>Signed in as {user?.email}</span>
+              </p>
             </div>
 
             {tasks.length > 0 ? (
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-4 gap-3">
                 <div className={`min-w-[90px] rounded-lg border p-3 text-center ${panelClass}`}>
-                  <p className="text-2xl font-bold text-blue-500">{dailyTasks.length}</p>
-                  <p className={`text-xs ${mutedText}`}>Daily</p>
+                  <p className="text-2xl font-bold text-blue-500">{tasks.length}</p>
+                  <p className={`text-xs ${mutedText}`}>Total Tasks</p>
                 </div>
                 <div className={`min-w-[90px] rounded-lg border p-3 text-center ${panelClass}`}>
                   <p className="text-2xl font-bold text-cyan-500">{commentsCount}</p>
@@ -745,6 +733,21 @@ export default function TasksPage() {
               </div>
             ) : null}
           </div>
+
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setIsDarkMode((current) => !current)}
+              className={`rounded-lg border px-3 py-2 text-sm font-semibold ${isDarkMode ? "border-slate-600 text-amber-300" : "border-slate-200 text-amber-500"}`}
+            >
+              {isDarkMode ? "☀️" : "🌙"}
+            </button>
+            <button
+              onClick={handleSignOut}
+              className="rounded-lg bg-red-500 px-4 py-2 text-sm font-semibold text-white"
+            >
+              Logout
+            </button>
+          </div>
         </header>
 
         {error ? (
@@ -759,7 +762,7 @@ export default function TasksPage() {
               <span className="h-8 w-1 rounded bg-blue-500" />Tasks
             </h2>
 
-            {showGroupInput ? (
+              {showGroupInput ? (
               <div className="flex gap-2">
                 <input
                   ref={groupInputRef}
@@ -768,7 +771,7 @@ export default function TasksPage() {
                   onChange={(e) => setGroupInput(e.target.value)}
                   onKeyDown={handleGroupEnter}
                   placeholder="Group name..."
-                  className={`w-full rounded-lg border px-3 py-3 outline-none ${inputClass}`}
+                  className={`w-full rounded-lg border px-3 py-2 outline-none ${inputClass}`}
                 />
                 <button type="button" onClick={() => createGroup()} className="rounded-lg bg-violet-500 px-4 py-2 text-sm font-semibold text-white">Create</button>
                 <button type="button" onClick={() => { setShowGroupInput(false); setGroupInput(""); }} className={`rounded-lg border px-3 py-2 text-sm ${isDarkMode ? "border-slate-600 text-slate-400" : "border-slate-200 text-slate-500"}`}>Cancel</button>
@@ -782,7 +785,7 @@ export default function TasksPage() {
                   onChange={(event) => setDailyInput(event.target.value)}
                   onKeyDown={handleEnter}
                   placeholder="Add a daily task..."
-                  className={`w-full rounded-lg border px-3 py-3 outline-none ${inputClass}`}
+                  className={`w-full rounded-lg border px-3 py-2 outline-none ${inputClass}`}
                 />
                 <button
                   type="button"
@@ -809,6 +812,7 @@ export default function TasksPage() {
                   {groups.map((group) => {
                     const isCollapsed = collapsedGroups.has(group.id);
                     const groupTasks = getSortedTasks(tasks.filter((t) => t.group_id === group.id));
+                    const groupIncompleteTasks = groupTasks.filter((t) => !t.is_complete);
                     const isDragging = dragGroupId === group.id;
                     const isDragOver = dragOverGroupId === group.id;
                     const groupBorderClass = isDragOver
@@ -855,7 +859,7 @@ export default function TasksPage() {
                           ) : (
                             <>
                               <span className={`flex-1 text-sm font-semibold ${shellText}`}>{group.title}</span>
-                              <span className={`text-xs ${mutedText}`}>{groupTasks.length} task{groupTasks.length !== 1 ? "s" : ""}</span>
+                              <span className={`text-xs ${mutedText}`}>{groupIncompleteTasks.length} task{groupIncompleteTasks.length !== 1 ? "s" : ""}</span>
                               <button type="button" onClick={(e) => { e.stopPropagation(); startGroupEdit(group); }} className={isDarkMode ? "text-xs text-cyan-400 hover:text-cyan-300" : "text-xs text-cyan-600 hover:text-cyan-500"}>Edit</button>
                               <button type="button" onClick={(e) => { e.stopPropagation(); removeGroup(group.id); }} className={isDarkMode ? "text-xs text-red-400 hover:text-red-300" : "text-xs text-red-500 hover:text-red-400"}>Delete</button>
                             </>
@@ -886,10 +890,10 @@ export default function TasksPage() {
                               </button>
                             </div>
                             <ul className="space-y-2">
-                              {groupTasks.length === 0 ? (
+                              {groupIncompleteTasks.length === 0 ? (
                                 <li className={`py-4 text-center text-sm ${mutedText}`}>No tasks in this group</li>
                               ) : (
-                                groupTasks.map((task) => renderTaskRow(task))
+                                groupIncompleteTasks.map((task) => renderTaskRow(task))
                               )}
                             </ul>
                           </div>
@@ -903,12 +907,37 @@ export default function TasksPage() {
                     onDrop={(e) => handleTaskDrop(e, null)}
                     onDragLeave={() => setDragTaskOverTarget(null)}
                   >
-                    {ungroupedTasks.map((task) => renderTaskRow(task))}
+                    {ungroupedIncompleteTasks.map((task) => renderTaskRow(task))}
                   </div>
                 </>
               )}
             </ul>
 
+            {/* Completed tasks toggle - outside main scroll area */}
+            <div className="mt-3">
+              <button
+                type="button"
+                onClick={() => setShowCompletedTasks((s) => !s)}
+                className={`w-full text-left rounded-lg border px-3 py-2 font-semibold ${panelClass}`}
+              >
+                <div className="flex items-center justify-between">
+                  <span>Completed</span>
+                  <span className={`text-sm ${mutedText}`}>{completedDailyTasks.length}</span>
+                </div>
+              </button>
+
+              {showCompletedTasks ? (
+                <div className={`mt-2 rounded-lg border p-2 ${panelClass}`}>
+                  <ul className="space-y-2 max-h-56 overflow-y-auto pr-1">
+                    {completedDailyTasks.length === 0 ? (
+                      <li className={`py-3 text-center text-sm ${mutedText}`}>No completed tasks</li>
+                    ) : (
+                      completedDailyTasks.map((task) => renderTaskRow(task))
+                    )}
+                  </ul>
+                </div>
+              ) : null}
+            </div>
 
           </section>
 
