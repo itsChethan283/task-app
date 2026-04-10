@@ -21,11 +21,13 @@ body {
 }
 
 body.light-mode {
-  background: linear-gradient(135deg, #f1f5f9 0%, #e2e8f0 100%);
+  background: linear-gradient(140deg, #f8fff9 0%, #eefcf2 48%, #f4fff7 100%);
 }
 
 body.dark-mode {
-  background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+  background: radial-gradient(circle at 18% 12%, rgba(29, 185, 84, 0.18), transparent 35%),
+    radial-gradient(circle at 84% 18%, rgba(30, 215, 96, 0.12), transparent 30%),
+    linear-gradient(145deg, #0b0b0b 0%, #121212 52%, #191414 100%);
 }
 
 .header-title {

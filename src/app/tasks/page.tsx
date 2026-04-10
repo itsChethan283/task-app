@@ -1,6 +1,6 @@
 "use client";
 
-import { KeyboardEvent, MouseEvent, useEffect, useMemo, useRef, useState } from "react";
+import { KeyboardEvent, MouseEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 
@@ -58,6 +58,7 @@ export default function TasksPage() {
   });
   const [groups, setGroups] = useState<TaskGroup[]>([]);
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
+  const [showGroupCompleted, setShowGroupCompleted] = useState<Set<string>>(new Set());
   const [showGroupInput, setShowGroupInput] = useState(false);
   const [groupInput, setGroupInput] = useState("");
   const [groupTaskInputs, setGroupTaskInputs] = useState<Record<string, string>>({});
@@ -66,6 +67,7 @@ export default function TasksPage() {
   const [showCompletedTasks, setShowCompletedTasks] = useState(false);
   const [dragGroupId, setDragGroupId] = useState<string | null>(null);
   const [dragOverGroupId, setDragOverGroupId] = useState<string | null>(null);
+  const [dragOverGroupPosition, setDragOverGroupPosition] = useState<"before" | "after">("before");
   const [dragTaskId, setDragTaskId] = useState<string | null>(null);
   const [dragTaskOverTarget, setDragTaskOverTarget] = useState<string | null>(null); // groupId or "ungrouped"
   const [isLoading, setIsLoading] = useState(true);
@@ -73,6 +75,38 @@ export default function TasksPage() {
   const groupInputRef = useRef<HTMLInputElement>(null);
   const taskInputRef = useRef<HTMLInputElement>(null);
   const editingTaskInputRef = useRef<HTMLInputElement>(null);
+  const initialGroupOrderRef = useRef<TaskGroup[] | null>(null);
+  const didGroupDropRef = useRef(false);
+  const groupItemRefs = useRef<Record<string, HTMLLIElement | null>>({});
+  const previousGroupTopsRef = useRef<Record<string, number>>({});
+
+  useLayoutEffect(() => {
+    const nextTops: Record<string, number> = {};
+
+    groups.forEach((group) => {
+      const element = groupItemRefs.current[group.id];
+      if (!element) return;
+
+      const nextTop = element.getBoundingClientRect().top;
+      nextTops[group.id] = nextTop;
+
+      const previousTop = previousGroupTopsRef.current[group.id];
+      if (previousTop == null) return;
+
+      const deltaY = previousTop - nextTop;
+      if (Math.abs(deltaY) < 1) return;
+
+      element.style.transition = "none";
+      element.style.transform = `translateY(${deltaY}px)`;
+
+      requestAnimationFrame(() => {
+        element.style.transition = "transform 380ms cubic-bezier(0.22, 1, 0.36, 1)";
+        element.style.transform = "translateY(0)";
+      });
+    });
+
+    previousGroupTopsRef.current = nextTops;
+  }, [groups]);
 
   useEffect(() => {
     const id = setTimeout(() => {
@@ -141,7 +175,10 @@ export default function TasksPage() {
       if (groupsError) {
         setError(groupsError.message);
       } else {
-        setGroups((groupsData as TaskGroup[] | null) ?? []);
+        const loadedGroups = (groupsData as TaskGroup[] | null) ?? [];
+        setGroups(loadedGroups);
+        // Default to collapsed groups on each fresh load (refresh/login).
+        setCollapsedGroups(new Set(loadedGroups.map((group) => group.id)));
       }
 
       setIsLoading(false);
@@ -422,6 +459,15 @@ export default function TasksPage() {
     });
   };
 
+  const toggleGroupCompleted = (groupId: string) => {
+    setShowGroupCompleted((current) => {
+      const next = new Set(current);
+      if (next.has(groupId)) next.delete(groupId);
+      else next.add(groupId);
+      return next;
+    });
+  };
+
   const handleGroupEnter = (event: KeyboardEvent<HTMLInputElement>) => {
     if (event.key !== "Enter") return;
     event.preventDefault();
@@ -440,39 +486,116 @@ export default function TasksPage() {
     void saveGroupEdit(groupId);
   };
 
-  const handleGroupDragStart = (groupId: string) => {
+  const handleGroupDragStart = (event: React.DragEvent, groupId: string) => {
     setDragGroupId(groupId);
+    setDragOverGroupPosition("before");
+    initialGroupOrderRef.current = groups;
+    didGroupDropRef.current = false;
+
+    const source = event.currentTarget as HTMLElement;
+    const draggedGroup = groups.find((group) => group.id === groupId);
+    const dragGhost = document.createElement("div");
+    dragGhost.textContent = draggedGroup?.title ?? "Group";
+    dragGhost.style.position = "fixed";
+    dragGhost.style.top = "-1000px";
+    dragGhost.style.left = "-1000px";
+    dragGhost.style.maxWidth = `${Math.max(source.offsetWidth, 220)}px`;
+    dragGhost.style.pointerEvents = "none";
+    dragGhost.style.opacity = "1";
+    dragGhost.style.transform = "scale(1.02)";
+    dragGhost.style.boxShadow = "0 18px 34px rgba(0,0,0,0.45)";
+    dragGhost.style.borderRadius = "12px";
+    dragGhost.style.padding = "10px 14px";
+    dragGhost.style.fontSize = "14px";
+    dragGhost.style.fontWeight = "700";
+    dragGhost.style.letterSpacing = "0.01em";
+    dragGhost.style.whiteSpace = "nowrap";
+    dragGhost.style.overflow = "hidden";
+    dragGhost.style.textOverflow = "ellipsis";
+    dragGhost.style.border = "1px solid";
+    dragGhost.style.zIndex = "9999";
+    if (isDarkMode) {
+      dragGhost.style.background = "#121212";
+      dragGhost.style.borderColor = "rgba(29,185,84,0.45)";
+      dragGhost.style.color = "#f1f5f9";
+      dragGhost.style.filter = "saturate(1.06)";
+    } else {
+      dragGhost.style.background = "#ffffff";
+      dragGhost.style.borderColor = "rgba(29,185,84,0.35)";
+      dragGhost.style.color = "#0f172a";
+    }
+    document.body.appendChild(dragGhost);
+    event.dataTransfer.setDragImage(dragGhost, 24, 24);
+    setTimeout(() => dragGhost.remove(), 0);
   };
 
   const handleGroupDragOver = (event: React.DragEvent, groupId: string) => {
     event.preventDefault();
-    if (groupId !== dragGroupId) setDragOverGroupId(groupId);
-  };
-
-  const handleGroupDrop = async (targetGroupId: string) => {
-    if (!dragGroupId || dragGroupId === targetGroupId) {
-      setDragGroupId(null);
+    if (groupId === dragGroupId) {
       setDragOverGroupId(null);
       return;
     }
-    const oldIndex = groups.findIndex((g) => g.id === dragGroupId);
-    const newIndex = groups.findIndex((g) => g.id === targetGroupId);
-    if (oldIndex === -1 || newIndex === -1) return;
-    const reordered = [...groups];
-    const [moved] = reordered.splice(oldIndex, 1);
-    reordered.splice(newIndex, 0, moved);
-    const updated = reordered.map((g, i) => ({ ...g, position: i }));
+
+    const target = event.currentTarget as HTMLElement;
+    const bounds = target.getBoundingClientRect();
+    const middleY = bounds.top + bounds.height / 2;
+    const nextPosition = event.clientY < middleY ? "before" : "after";
+    setDragOverGroupPosition(nextPosition);
+    setDragOverGroupId(groupId);
+
+    if (!dragGroupId) return;
+
+    setGroups((current) => {
+      const oldIndex = current.findIndex((g) => g.id === dragGroupId);
+      const targetIndex = current.findIndex((g) => g.id === groupId);
+      if (oldIndex === -1 || targetIndex === -1) return current;
+
+      const reordered = [...current];
+      const [moved] = reordered.splice(oldIndex, 1);
+
+      let insertIndex = nextPosition === "after" ? targetIndex + 1 : targetIndex;
+      if (oldIndex < insertIndex) {
+        insertIndex -= 1;
+      }
+      insertIndex = Math.max(0, Math.min(insertIndex, reordered.length));
+
+      if (insertIndex === oldIndex) {
+        return current;
+      }
+
+      reordered.splice(insertIndex, 0, moved);
+      return reordered;
+    });
+  };
+
+  const handleGroupDrop = async (_targetGroupId: string) => {
+    if (!dragGroupId) {
+      setDragGroupId(null);
+      setDragOverGroupId(null);
+      setDragOverGroupPosition("before");
+      return;
+    }
+    didGroupDropRef.current = true;
+    const updated = groups.map((g, i) => ({ ...g, position: i }));
     setGroups(updated);
     setDragGroupId(null);
     setDragOverGroupId(null);
+    setDragOverGroupPosition("before");
+    initialGroupOrderRef.current = null;
     await Promise.all(
       updated.map((g) => supabase.from("task_groups").update({ position: g.position }).eq("id", g.id))
     );
   };
 
   const handleGroupDragEnd = () => {
+    if (!didGroupDropRef.current && initialGroupOrderRef.current) {
+      setGroups(initialGroupOrderRef.current);
+    }
     setDragGroupId(null);
     setDragOverGroupId(null);
+    setDragOverGroupPosition("before");
+    initialGroupOrderRef.current = null;
+    didGroupDropRef.current = false;
   };
 
   const moveTaskToGroup = async (taskId: string, targetGroupId: string | null) => {
@@ -536,19 +659,86 @@ export default function TasksPage() {
     return classes[Math.min(task.importance, 4)];
   };
 
-  const renderTaskRow = (task: Task) => {
-    const cardClass = task.is_complete
-      ? isDarkMode
-        ? "border-slate-700 bg-slate-800/70 opacity-70"
-        : "border-slate-200 bg-slate-200/70 opacity-80"
-      : isDarkMode
-        ? "border-slate-700 bg-slate-800"
-        : "border-slate-200 bg-white";
+  const getCommentPreview = (content: string) => {
+    const compact = content.replace(/\s+/g, " ").trim();
+    if (compact.length <= 72) {
+      return compact;
+    }
+    return `${compact.slice(0, 72)}...`;
+  };
 
-    const dotClass = task.is_complete ? "text-slate-500" : isDarkMode ? "text-slate-600 hover:text-blue-400" : "text-slate-300 hover:text-blue-500";
-    const deleteClass = isDarkMode ? "text-slate-500 hover:text-red-400" : "text-slate-300 hover:text-red-500";
+  const renderTaskRow = (task: Task) => {
+    // Use color intensity as the primary importance signal.
+    const isTaskComplete = task.is_complete;
+    const importance = Math.min(Math.max(task.importance ?? 0, 0), 5);
+    const baseBorder = isDarkMode ? "border-slate-700" : "border-slate-200";
+
+    let priorityBg = "";
+    if (isTaskComplete) {
+      priorityBg = isDarkMode ? "bg-slate-800/70 opacity-70" : "bg-slate-200/70 opacity-80";
+    } else {
+      if (isDarkMode) {
+        // Dark mode uses Spotify-like green intensity steps.
+        switch (importance) {
+          case 0:
+            priorityBg = "bg-slate-800";
+            break;
+          case 1:
+            priorityBg = "bg-emerald-400/8";
+            break;
+          case 2:
+            priorityBg = "bg-emerald-400/14";
+            break;
+          case 3:
+            priorityBg = "bg-emerald-300/20";
+            break;
+          case 4:
+            priorityBg = "bg-emerald-300/26";
+            break;
+          default:
+            priorityBg = "bg-emerald-200/32";
+            break;
+        }
+      } else {
+        // Light mode uses stronger tints for quick scanning.
+        switch (importance) {
+          case 0:
+            priorityBg = "bg-white";
+            break;
+          case 1:
+            priorityBg = "bg-emerald-50";
+            break;
+          case 2:
+            priorityBg = "bg-emerald-100";
+            break;
+          case 3:
+            priorityBg = "bg-emerald-200";
+            break;
+          case 4:
+            priorityBg = "bg-emerald-300/90";
+            break;
+          default:
+            priorityBg = "bg-emerald-400/80";
+            break;
+        }
+      }
+    }
+
+    const cardClass = `${baseBorder} ${priorityBg}`;
+
+    const dotClass = task.is_complete
+      ? isDarkMode
+        ? "border-emerald-400 bg-emerald-400 text-slate-950 hover:bg-emerald-300"
+        : "border-emerald-600 bg-emerald-600 text-white hover:bg-emerald-500"
+      : isDarkMode
+        ? "border-slate-500 bg-slate-800 text-slate-200 hover:border-emerald-300 hover:text-emerald-200"
+        : "border-slate-400 bg-white text-slate-700 hover:border-emerald-600 hover:text-emerald-700";
+    const deleteClass = isDarkMode ? "text-slate-600 hover:text-slate-400" : "text-slate-400 hover:text-slate-500";
 
     const isTaskDragging = dragTaskId === task.id;
+    const isTaskSelected = selectedTaskId === task.id;
+    const commentsForTask = commentsByTask[task.id] ?? [];
+    const latestComment = commentsForTask[0] ?? null;
 
     return (
       <li
@@ -556,19 +746,21 @@ export default function TasksPage() {
         draggable
         onDragStart={(e) => handleTaskDragStart(e, task.id)}
         onDragEnd={handleTaskDragEnd}
-        className={`rounded-lg border-l-4 border-l-blue-500 px-4 py-3 transition hover:translate-x-1 ${cardClass} ${isTaskDragging ? "opacity-40" : "opacity-100"}`}
+        className={`rounded-xl shadow-sm hover:shadow-md border-l-4 border-l-emerald-500 px-3 py-2 transition hover:translate-x-1 ${cardClass} ${isTaskDragging ? "opacity-40" : "opacity-100"} ${isTaskSelected ? (isDarkMode ? "ring-2 ring-emerald-400/60" : "ring-2 ring-emerald-500/40") : ""}`}
       >
         <div
-          className="flex items-start gap-3"
+          className="flex items-start gap-2"
           onClick={(e) => handleTaskCardClick(e, task.id)}
         >
           <button
             type="button"
             onClick={() => toggleTask(task)}
-            className={`mt-0.5 text-3xl w-12 h-12 flex items-center justify-center rounded-full transition ${dotClass}`}
-            aria-label="Toggle task"
+            className={`mt-0.5 h-9 w-9 flex items-center justify-center rounded-full border text-base font-bold transition ${dotClass} focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400 focus-visible:ring-offset-2 ${isDarkMode ? "focus-visible:ring-offset-slate-800" : "focus-visible:ring-offset-white"}`}
+            aria-label={task.is_complete ? "Mark task as incomplete" : "Mark task as complete"}
+            aria-pressed={task.is_complete}
+            title={task.is_complete ? "Completed" : "Not completed"}
           >
-            ○
+            {task.is_complete ? "✓" : "○"}
           </button>
 
           {editingTaskId === task.id ? (
@@ -581,20 +773,28 @@ export default function TasksPage() {
                 onKeyDown={(e) => handleTaskEditEnter(e, task.id)}
                 className={`w-full rounded-lg border px-3 py-2 text-sm outline-none ${inputClass}`}
               />
-              <p className={`mt-2 text-xs ${mutedText}`}>Use # at start to update priority.</p>
+              <p className={`mt-2 text-xs ${mutedText}`}>Color intensity reflects importance.</p>
             </div>
           ) : (
             <div className="min-w-0 flex-1 text-left">
               <span className={`block break-words ${getTaskTextClass(task)} ${getTaskWeightClass(task)}`}>
                 {task.title}
               </span>
-              {task.importance > 0 ? (
-                <span className="mt-2 flex gap-1">
-                  {Array.from({ length: task.importance }).map((_, index) => (
-                    <span key={`${task.id}-${index}`} className="h-2 w-2 rounded-full bg-blue-500" />
-                  ))}
+
+              <div className="mt-2 flex min-h-5 items-center gap-2">
+                <span
+                  className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${isDarkMode ? "bg-slate-700 text-slate-300" : "bg-slate-200 text-slate-600"}`}
+                >
+                  {commentsForTask.length} comment{commentsForTask.length !== 1 ? "s" : ""}
                 </span>
-              ) : null}
+                {latestComment ? (
+                  <p className={`min-w-0 truncate text-xs ${mutedText}`} title={latestComment.content}>
+                    {getCommentPreview(latestComment.content)}
+                  </p>
+                ) : (
+                  <p className={`text-xs ${mutedText}`}>No comments yet</p>
+                )}
+              </div>
             </div>
           )}
 
@@ -621,7 +821,7 @@ export default function TasksPage() {
                 <button
                   type="button"
                   onClick={() => startTaskEdit(task)}
-                  className={isDarkMode ? "text-sm text-cyan-400 transition hover:text-cyan-300" : "text-sm text-cyan-600 transition hover:text-cyan-500"}
+                  className={isDarkMode ? "text-sm text-emerald-300 transition hover:text-emerald-200" : "text-sm text-emerald-700 transition hover:text-emerald-600"}
                   aria-label="Edit task"
                 >
                   Edit
@@ -678,17 +878,19 @@ export default function TasksPage() {
     acc[comment.task_id].push(comment);
     return acc;
   }, {});
-  const commentsCount = taskComments.length;
   const completedCount = tasks.filter((task) => task.is_complete).length;
-  const priorityCount = tasks.filter((task) => task.importance > 0).length;
-  const hasIncompleteInGroups = groups.some((g) => tasks.some((t) => t.group_id === g.id && !t.is_complete));
+  const pendingCount = tasks.filter((task) => !task.is_complete).length;
+  const selectedTaskComments = selectedTask ? commentsByTask[selectedTask.id] ?? [] : [];
 
   const shellText = isDarkMode ? "text-slate-100" : "text-slate-900";
   const mutedText = isDarkMode ? "text-slate-400" : "text-slate-500";
-  const panelClass = isDarkMode ? "border-slate-700 bg-slate-800" : "border-slate-200 bg-white";
+  const panelClass = isDarkMode
+    ? "border-emerald-500/30 bg-[#181818]/90 backdrop-blur-sm shadow-[0_10px_30px_rgba(29,185,84,0.12)]"
+    : "border-emerald-200 bg-white/92 backdrop-blur-sm shadow-[0_10px_24px_rgba(29,185,84,0.14)]";
+  const panelEdgeClass = isDarkMode ? "border-slate-700" : "border-slate-200";
   const inputClass = isDarkMode
-    ? "border-slate-700 bg-slate-900 text-slate-100 placeholder:text-slate-500"
-    : "border-slate-200 bg-white text-slate-900 placeholder:text-slate-400";
+    ? "border-slate-700 bg-[#121212] text-slate-100 placeholder:text-slate-500 focus-visible:border-emerald-400 focus-visible:ring-2 focus-visible:ring-emerald-400/60"
+    : "border-slate-300 bg-white text-slate-900 placeholder:text-slate-400 focus-visible:border-emerald-500 focus-visible:ring-2 focus-visible:ring-emerald-400/50";
 
   if (isLoading) {
     return (
@@ -699,36 +901,34 @@ export default function TasksPage() {
   }
 
   return (
-    <main className="min-h-screen p-8">
-      <section className="mx-auto max-w-7xl">
+    <main className="relative min-h-screen overflow-hidden p-8">
+      <div className={`pointer-events-none absolute -left-24 -top-24 h-80 w-80 rounded-full blur-3xl ${isDarkMode ? "bg-emerald-500/18" : "bg-emerald-200/65"}`} />
+      <div className={`pointer-events-none absolute -right-20 top-40 h-72 w-72 rounded-full blur-3xl ${isDarkMode ? "bg-lime-500/10" : "bg-lime-200/45"}`} />
+      <section className="relative z-10 mx-auto max-w-7xl">
         <header className="mb-6 flex flex-wrap items-start justify-between gap-4">
           <div className="flex items-center gap-6">
             <div>
               <h1 className={`header-title text-5xl font-bold ${shellText}`}>Tasks</h1>
               <p className={`mt-1 text-lg ${mutedText}`}>Welcome, {username}</p>
               <p className={`mt-0 text-sm ${isDarkMode ? "text-slate-500" : "text-slate-400"}`}>
-                <span className="mr-3">Use #, ##, ### or more at task start to mark priority.</span>
+                <span className="mr-3">Task color intensity indicates priority.</span>
                 <span>Signed in as {user?.email}</span>
               </p>
             </div>
 
             {tasks.length > 0 ? (
-              <div className="grid grid-cols-4 gap-3">
-                <div className={`min-w-[90px] rounded-lg border p-3 text-center ${panelClass}`}>
-                  <p className="text-2xl font-bold text-blue-500">{tasks.length}</p>
+              <div className="grid grid-cols-3 gap-3">
+                <div className={`min-w-[90px] rounded-xl border p-3 text-center transition hover:-translate-y-0.5 hover:shadow-lg ${panelClass} ${isDarkMode ? "border-emerald-400/50 bg-emerald-500/14" : "border-emerald-300 bg-emerald-50"}`}>
+                  <p className={`text-2xl font-bold ${isDarkMode ? "text-emerald-300" : "text-emerald-700"}`}>{completedCount}</p>
+                  <p className={`text-xs ${isDarkMode ? "text-emerald-200/85" : "text-emerald-700/80"}`}>Completed</p>
+                </div>
+                <div className={`min-w-[90px] rounded-xl border p-3 text-center transition hover:-translate-y-0.5 hover:shadow-lg ${panelClass} ${isDarkMode ? "border-lime-300/70 bg-lime-400/18 shadow-[0_0_0_1px_rgba(163,230,53,0.25)]" : "border-lime-400 bg-lime-100 shadow-[0_0_0_1px_rgba(132,204,22,0.25)]"}`}>
+                  <p className={`text-2xl font-extrabold ${isDarkMode ? "text-lime-200" : "text-lime-800"}`}>{pendingCount}</p>
+                  <p className={`text-xs font-semibold ${isDarkMode ? "text-lime-100/90" : "text-lime-800/85"}`}>Pending</p>
+                </div>
+                <div className={`min-w-[90px] rounded-xl border p-3 text-center transition hover:-translate-y-0.5 hover:shadow-lg ${panelClass} ${isDarkMode ? "border-slate-600 bg-slate-800/70" : "border-slate-200 bg-slate-50/80"}`}>
+                  <p className={`text-2xl font-bold ${isDarkMode ? "text-slate-200" : "text-slate-700"}`}>{tasks.length}</p>
                   <p className={`text-xs ${mutedText}`}>Total Tasks</p>
-                </div>
-                <div className={`min-w-[90px] rounded-lg border p-3 text-center ${panelClass}`}>
-                  <p className="text-2xl font-bold text-cyan-500">{commentsCount}</p>
-                  <p className={`text-xs ${mutedText}`}>Comments</p>
-                </div>
-                <div className={`min-w-[90px] rounded-lg border p-3 text-center ${panelClass}`}>
-                  <p className="text-2xl font-bold text-emerald-500">{completedCount}</p>
-                  <p className={`text-xs ${mutedText}`}>Done</p>
-                </div>
-                <div className={`min-w-[90px] rounded-lg border p-3 text-center ${panelClass}`}>
-                  <p className="text-2xl font-bold text-orange-500">{priorityCount}</p>
-                  <p className={`text-xs ${mutedText}`}>Priority</p>
                 </div>
               </div>
             ) : null}
@@ -737,13 +937,13 @@ export default function TasksPage() {
           <div className="flex items-center gap-2">
             <button
               onClick={() => setIsDarkMode((current) => !current)}
-              className={`rounded-lg border px-3 py-2 text-sm font-semibold ${isDarkMode ? "border-slate-600 text-amber-300" : "border-slate-200 text-amber-500"}`}
+              className={`rounded-xl border px-3 py-2 text-sm font-semibold transition hover:-translate-y-0.5 hover:shadow-md ${isDarkMode ? "border-emerald-400/45 bg-[#121212]/70 text-emerald-200 hover:bg-[#121212]" : "border-emerald-300 bg-white/80 text-emerald-700 hover:bg-white"}`}
             >
               {isDarkMode ? "☀️" : "🌙"}
             </button>
             <button
               onClick={handleSignOut}
-              className="rounded-lg bg-red-500 px-4 py-2 text-sm font-semibold text-white"
+              className="rounded-xl bg-gradient-to-r from-rose-500 to-red-500 px-4 py-2 text-sm font-semibold text-white shadow-md transition hover:-translate-y-0.5 hover:from-rose-400 hover:to-red-400 hover:shadow-lg"
             >
               Logout
             </button>
@@ -756,13 +956,13 @@ export default function TasksPage() {
           </p>
         ) : null}
 
-        <div className="grid gap-8 md:grid-cols-3">
-          <section className="flex flex-col gap-4 md:col-span-2">
+        <div className="grid gap-8 md:grid-cols-[minmax(0,2.35fr)_minmax(280px,0.9fr)]">
+          <section className="flex flex-col gap-4">
             <h2 className={`flex items-center gap-2 text-2xl font-bold ${shellText}`}>
-              <span className="h-8 w-1 rounded bg-blue-500" />Tasks
+              <span className="h-8 w-1 rounded bg-gradient-to-b from-[#1ed760] to-[#1db954]" />Tasks
             </h2>
 
-              {showGroupInput ? (
+            {showGroupInput ? (
               <div className="flex gap-2">
                 <input
                   ref={groupInputRef}
@@ -773,7 +973,7 @@ export default function TasksPage() {
                   placeholder="Group name..."
                   className={`w-full rounded-lg border px-3 py-2 outline-none ${inputClass}`}
                 />
-                <button type="button" onClick={() => createGroup()} className="rounded-lg bg-violet-500 px-4 py-2 text-sm font-semibold text-white">Create</button>
+                <button type="button" onClick={() => createGroup()} className="rounded-xl bg-gradient-to-r from-[#1ed760] to-[#1db954] px-4 py-2 text-sm font-semibold text-[#04130a] shadow-sm transition hover:-translate-y-0.5 hover:from-[#2af06e] hover:to-[#22c55e] hover:shadow-md">Create</button>
                 <button type="button" onClick={() => { setShowGroupInput(false); setGroupInput(""); }} className={`rounded-lg border px-3 py-2 text-sm ${isDarkMode ? "border-slate-600 text-slate-400" : "border-slate-200 text-slate-500"}`}>Cancel</button>
               </div>
             ) : (
@@ -790,21 +990,21 @@ export default function TasksPage() {
                 <button
                   type="button"
                   onClick={() => addTask()}
-                  className="rounded-lg bg-blue-500 px-4 py-2 text-sm font-semibold text-white"
+                  className="rounded-xl bg-gradient-to-r from-[#1ed760] to-[#1db954] px-4 py-2 text-sm font-semibold text-[#04130a] shadow-sm transition hover:-translate-y-0.5 hover:from-[#2af06e] hover:to-[#22c55e] hover:shadow-md"
                 >
                   Add
                 </button>
                 <button
                   type="button"
                   onClick={() => setShowGroupInput(true)}
-                  className={`rounded-lg border px-4 py-2 text-sm font-semibold transition ${isDarkMode ? "border-slate-600 text-violet-400 hover:border-violet-500 hover:text-violet-300" : "border-slate-200 text-violet-600 hover:border-violet-300 hover:text-violet-500"}`}
+                  className={`rounded-xl border px-4 py-2 text-sm font-semibold transition hover:-translate-y-0.5 hover:shadow-sm ${isDarkMode ? "border-slate-600 bg-[#121212]/70 text-emerald-300 hover:border-emerald-400 hover:text-emerald-200" : "border-slate-200 bg-white/80 text-emerald-700 hover:border-emerald-300 hover:text-emerald-600"}`}
                 >
                   + Group
                 </button>
               </div>
             )}
 
-            <ul className="max-h-[70vh] space-y-3 overflow-y-auto pr-1">
+            <ul className="space-y-2 pr-1">
               {dailyTasks.length === 0 && groups.length === 0 ? (
                 <li className={`py-12 text-center text-lg ${mutedText}`}>No tasks yet</li>
               ) : (
@@ -813,18 +1013,27 @@ export default function TasksPage() {
                     const isCollapsed = collapsedGroups.has(group.id);
                     const groupTasks = getSortedTasks(tasks.filter((t) => t.group_id === group.id));
                     const groupIncompleteTasks = groupTasks.filter((t) => !t.is_complete);
+                    const groupCompletedTasks = groupTasks.filter((t) => t.is_complete);
+                    const isGroupCompletedVisible = showGroupCompleted.has(group.id);
                     const isDragging = dragGroupId === group.id;
                     const isDragOver = dragOverGroupId === group.id;
+                    const dropBefore = isDragOver && dragOverGroupPosition === "before";
+                    const dropAfter = isDragOver && dragOverGroupPosition === "after";
                     const groupBorderClass = isDragOver
-                      ? isDarkMode ? "border-violet-500 bg-slate-800/80" : "border-violet-400 bg-slate-50"
-                      : isDarkMode ? "border-slate-600 bg-slate-800/80" : "border-slate-200 bg-slate-50";
-                    const groupHeaderClass = isDarkMode ? "border-slate-600 bg-slate-700/60 hover:bg-slate-700" : "border-slate-200 bg-slate-100 hover:bg-slate-200";
+                      ? isDarkMode ? "border-emerald-400 bg-[#212121]/95 shadow-[0_0_0_1px_rgba(29,185,84,0.45)] ring-2 ring-emerald-400/35" : "border-emerald-400 bg-emerald-50/90 ring-2 ring-emerald-300/60"
+                      : isDarkMode ? "border-emerald-500/35 bg-[#1a1a1a]/90 shadow-[0_6px_18px_rgba(29,185,84,0.10)]" : "border-emerald-300 bg-white/92 shadow-[0_6px_14px_rgba(29,185,84,0.10)]";
+                    const groupHeaderClass = isDarkMode
+                      ? "border-[#2f2f2f] bg-gradient-to-r from-[#202020] via-[#242424] to-[#2a2a2a] hover:from-[#262626] hover:to-[#303030]"
+                      : "border-emerald-200 bg-gradient-to-r from-emerald-50 to-white hover:from-emerald-100 hover:to-emerald-50";
                     return (
                       <li
                         key={group.id}
-                        className={`rounded-lg border ${groupBorderClass} overflow-hidden transition-opacity ${isDragging ? "opacity-40" : "opacity-100"}`}
+                        ref={(element) => {
+                          groupItemRefs.current[group.id] = element;
+                        }}
+                        className={`relative rounded-xl border ${groupBorderClass} overflow-hidden will-change-transform transition-all duration-300 ${isDragging ? "opacity-0" : "opacity-100"}`}
                         draggable
-                        onDragStart={() => handleGroupDragStart(group.id)}
+                        onDragStart={(e) => handleGroupDragStart(e, group.id)}
                         onDragOver={(e) => handleGroupDragOver(e, group.id)}
                         onDrop={() => handleGroupDrop(group.id)}
                         onDragEnd={handleGroupDragEnd}
@@ -860,14 +1069,14 @@ export default function TasksPage() {
                             <>
                               <span className={`flex-1 text-sm font-semibold ${shellText}`}>{group.title}</span>
                               <span className={`text-xs ${mutedText}`}>{groupIncompleteTasks.length} task{groupIncompleteTasks.length !== 1 ? "s" : ""}</span>
-                              <button type="button" onClick={(e) => { e.stopPropagation(); startGroupEdit(group); }} className={isDarkMode ? "text-xs text-cyan-400 hover:text-cyan-300" : "text-xs text-cyan-600 hover:text-cyan-500"}>Edit</button>
-                              <button type="button" onClick={(e) => { e.stopPropagation(); removeGroup(group.id); }} className={isDarkMode ? "text-xs text-red-400 hover:text-red-300" : "text-xs text-red-500 hover:text-red-400"}>Delete</button>
+                              <button type="button" onClick={(e) => { e.stopPropagation(); startGroupEdit(group); }} className={isDarkMode ? "text-xs text-emerald-300 hover:text-emerald-200" : "text-xs text-emerald-700 hover:text-emerald-600"}>Edit</button>
+                              <button type="button" onClick={(e) => { e.stopPropagation(); removeGroup(group.id); }} className={isDarkMode ? "text-xs text-slate-500 hover:text-slate-400" : "text-xs text-slate-400 hover:text-slate-500"}>Delete</button>
                             </>
                           )}
                         </div>
                         {!isCollapsed && (
                           <div
-                            className={`px-2 pb-2 pt-1 rounded-b-lg transition-colors ${dragTaskOverTarget === group.id ? (isDarkMode ? "bg-violet-900/30" : "bg-violet-50") : ""}`}
+                            className={`px-2 pb-2 pt-1 rounded-b-lg transition-colors ${dragTaskOverTarget === group.id ? (isDarkMode ? "bg-emerald-900/35" : "bg-emerald-50/95") : (isDarkMode ? "bg-[#181818]/60" : "bg-white/85")}`}
                             onDragOver={(e) => handleTaskDragOver(e, group.id)}
                             onDrop={(e) => handleTaskDrop(e, group.id)}
                             onDragLeave={() => setDragTaskOverTarget(null)}
@@ -884,7 +1093,7 @@ export default function TasksPage() {
                               <button
                                 type="button"
                                 onClick={() => addGroupTask(group.id)}
-                                className="rounded-lg bg-blue-500 px-3 py-2 text-xs font-semibold text-white"
+                                className="rounded-lg bg-gradient-to-r from-[#1ed760] to-[#1db954] px-3 py-2 text-xs font-semibold text-[#04130a] shadow-sm transition hover:-translate-y-0.5 hover:from-[#2af06e] hover:to-[#22c55e]"
                               >
                                 Add
                               </button>
@@ -896,13 +1105,40 @@ export default function TasksPage() {
                                 groupIncompleteTasks.map((task) => renderTaskRow(task))
                               )}
                             </ul>
+
+                            {groupCompletedTasks.length > 0 ? (
+                              <div className="mt-2">
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    toggleGroupCompleted(group.id);
+                                  }}
+                                  className={`w-full text-left rounded-lg border px-3 py-1 text-xs font-semibold ${panelClass}`}
+                                >
+                                  <div className="flex items-center justify-between">
+                                    <span className={isDarkMode ? "text-slate-100" : "text-slate-800"}>Completed Tasks</span>
+                                    <span className={`text-sm ${mutedText}`}>{groupCompletedTasks.length}</span>
+                                  </div>
+                                </button>
+
+                                {isGroupCompletedVisible ? (
+                                  <div className={`mt-2 rounded-lg border p-2 ${panelClass}`}>
+                                    <ul className="space-y-2 pr-1">
+                                      {groupCompletedTasks.map((task) => renderTaskRow(task))}
+                                    </ul>
+                                  </div>
+                                ) : null}
+                              </div>
+                            ) : null}
                           </div>
                         )}
+
                       </li>
                     );
                   })}
                   <div
-                    className={`space-y-3 rounded-lg p-1 transition-colors ${dragTaskOverTarget === "ungrouped" ? (isDarkMode ? "bg-slate-700/50" : "bg-slate-100") : ""}`}
+                    className={`space-y-2 rounded-lg p-1 transition-colors ${dragTaskOverTarget === "ungrouped" ? (isDarkMode ? "bg-slate-700/50" : "bg-slate-100") : ""}`}
                     onDragOver={(e) => handleTaskDragOver(e, "ungrouped")}
                     onDrop={(e) => handleTaskDrop(e, null)}
                     onDragLeave={() => setDragTaskOverTarget(null)}
@@ -913,74 +1149,60 @@ export default function TasksPage() {
               )}
             </ul>
 
-            {/* Completed tasks toggle - outside main scroll area */}
-            <div className="mt-3">
-              <button
-                type="button"
-                onClick={() => setShowCompletedTasks((s) => !s)}
-                className={`w-full text-left rounded-lg border px-3 py-2 font-semibold ${panelClass}`}
-              >
-                <div className="flex items-center justify-between">
-                  <span>Completed</span>
-                  <span className={`text-sm ${mutedText}`}>{completedDailyTasks.length}</span>
-                </div>
-              </button>
+            {ungroupedCompletedTasks.length > 0 ? (
+              <div className="mt-3">
+                <button
+                  type="button"
+                  onClick={() => setShowCompletedTasks((s) => !s)}
+                  className={`w-full text-left rounded-xl border px-3 py-2 font-semibold transition hover:-translate-y-0.5 hover:shadow-sm ${panelClass}`}
+                >
+                  <div className="flex items-center justify-between">
+                    <span className={isDarkMode ? "text-slate-100" : "text-slate-800"}>Completed Tasks</span>
+                    <span className={`text-sm ${mutedText}`}>{ungroupedCompletedTasks.length}</span>
+                  </div>
+                </button>
 
-              {showCompletedTasks ? (
-                <div className={`mt-2 rounded-lg border p-2 ${panelClass}`}>
-                  <ul className="space-y-2 max-h-56 overflow-y-auto pr-1">
-                    {completedDailyTasks.length === 0 ? (
-                      <li className={`py-3 text-center text-sm ${mutedText}`}>No completed tasks</li>
-                    ) : (
-                      completedDailyTasks.map((task) => renderTaskRow(task))
-                    )}
-                  </ul>
-                </div>
-              ) : null}
-            </div>
-
+                {showCompletedTasks ? (
+                  <div className={`mt-2 rounded-lg border p-2 ${panelClass}`}>
+                    <ul className="space-y-2 pr-1">
+                      {ungroupedCompletedTasks.map((task) => renderTaskRow(task))}
+                    </ul>
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
           </section>
 
-          <section className="flex flex-col gap-4 md:col-span-1">
+          <section className="flex flex-col gap-4">
             <h2 className={`flex items-center gap-2 text-2xl font-bold ${shellText}`}>
-              <span className="h-8 w-1 rounded bg-cyan-500" />Comments
+              <span className="h-8 w-1 rounded bg-gradient-to-b from-[#1ed760] to-[#1db954]" />Comments
             </h2>
 
-            <ul className="max-h-[70vh] space-y-3 overflow-y-auto pr-1">
+            <div className={`flex min-h-[64vh] flex-col rounded-xl border transition hover:shadow-lg ${panelClass} ${isDarkMode ? "bg-[#181818]/95" : "bg-white/95"}`}>
               {dailyTasks.length === 0 ? (
-                <li className={`py-12 text-center text-lg ${mutedText}`}>Add daily tasks to write comments</li>
+                <div className="flex flex-1 items-center justify-center px-6">
+                  <p className={`text-center text-lg ${mutedText}`}>Add daily tasks to start discussions</p>
+                </div>
               ) : selectedTask == null ? (
-                <li className={`py-12 text-center text-lg ${mutedText}`}>Click a task to view and add comments</li>
+                <div className="flex flex-1 items-center justify-center px-6">
+                  <p className={`text-center text-lg ${mutedText}`}>Select a task to open its discussion thread</p>
+                </div>
               ) : (
-                <li key={`comments-${selectedTask.id}`} className={`rounded-lg border p-4 ${panelClass}`}>
-                  <p className={`text-sm font-semibold ${shellText}`}>{selectedTask.title}</p>
-
-                  <div className="mt-3 flex gap-2">
-                    <input
-                      type="text"
-                      value={currentCommentInput}
-                      onChange={(event) => setCurrentCommentInput(event.target.value)}
-                      onKeyDown={(event) => handleCommentEnter(event, selectedTask.id)}
-                      placeholder="Add a comment..."
-                      className={`w-full rounded-lg border px-3 py-2 text-sm outline-none ${inputClass}`}
-                    />
-                    <button
-                      type="button"
-                      onClick={() => addComment(selectedTask.id)}
-                      className="rounded-lg bg-cyan-500 px-3 py-2 text-xs font-semibold text-white"
-                    >
-                      Add
-                    </button>
+                <div className="flex flex-1 flex-col">
+                  <div className={`border-b px-4 py-3 ${panelEdgeClass} ${isDarkMode ? "bg-[#121212]/55" : "bg-emerald-50/70"}`}>
+                    <p className={`text-[11px] font-semibold uppercase tracking-wide ${mutedText}`}>Discussion</p>
+                    <p className={`mt-1 text-sm font-semibold ${shellText}`}>{selectedTask.title}</p>
+                    <p className={`mt-1 text-xs ${mutedText}`}>{selectedTaskComments.length} comment{selectedTaskComments.length !== 1 ? "s" : ""}</p>
                   </div>
 
-                  <ul className="mt-3 space-y-2">
-                    {(commentsByTask[selectedTask.id] ?? []).length === 0 ? (
-                      <li className={`text-xs ${mutedText}`}>No comments yet</li>
+                  <ul className="flex-1 space-y-2 p-3">
+                    {selectedTaskComments.length === 0 ? (
+                      <li className={`py-6 text-center text-sm ${mutedText}`}>No comments yet</li>
                     ) : (
-                      (commentsByTask[selectedTask.id] ?? []).map((comment) => (
+                      selectedTaskComments.map((comment) => (
                         <li
                           key={comment.id}
-                          className={`rounded-md border px-3 py-2 text-sm ${isDarkMode ? "border-slate-700 bg-slate-900/70 text-slate-200" : "border-slate-200 bg-slate-50 text-slate-700"}`}
+                          className={`rounded-md border px-3 py-2 text-sm ${isDarkMode ? "border-[#303030] bg-[#202020] text-slate-200" : "border-emerald-100 bg-emerald-50/60 text-slate-700"}`}
                         >
                           {editingCommentId === comment.id ? (
                             <div>
@@ -1017,14 +1239,14 @@ export default function TasksPage() {
                                   <button
                                     type="button"
                                     onClick={() => startCommentEdit(comment)}
-                                    className={isDarkMode ? "text-xs font-semibold text-cyan-400 transition hover:text-cyan-300" : "text-xs font-semibold text-cyan-600 transition hover:text-cyan-500"}
+                                    className={isDarkMode ? "text-xs font-semibold text-emerald-300 transition hover:text-emerald-200" : "text-xs font-semibold text-emerald-700 transition hover:text-emerald-600"}
                                   >
                                     Edit
                                   </button>
                                   <button
                                     type="button"
                                     onClick={() => removeComment(comment.id)}
-                                    className={isDarkMode ? "text-xs font-semibold text-red-400 transition hover:text-red-300" : "text-xs font-semibold text-red-500 transition hover:text-red-400"}
+                                    className={isDarkMode ? "text-xs font-semibold text-slate-500 transition hover:text-slate-400" : "text-xs font-semibold text-slate-400 transition hover:text-slate-500"}
                                   >
                                     Delete
                                   </button>
@@ -1036,9 +1258,29 @@ export default function TasksPage() {
                       ))
                     )}
                   </ul>
-                </li>
+
+                  <div className={`border-t p-3 ${panelEdgeClass}`}>
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        value={currentCommentInput}
+                        onChange={(event) => setCurrentCommentInput(event.target.value)}
+                        onKeyDown={(event) => handleCommentEnter(event, selectedTask.id)}
+                        placeholder="Add a comment..."
+                        className={`w-full rounded-lg border px-3 py-2 text-sm outline-none ${inputClass}`}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => addComment(selectedTask.id)}
+                        className="rounded-lg bg-gradient-to-r from-[#1ed760] to-[#1db954] px-3 py-2 text-xs font-semibold text-[#04130a] shadow-sm transition hover:-translate-y-0.5 hover:from-[#2af06e] hover:to-[#22c55e]"
+                      >
+                        Add
+                      </button>
+                    </div>
+                  </div>
+                </div>
               )}
-            </ul>
+            </div>
           </section>
         </div>
       </section>
