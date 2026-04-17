@@ -65,11 +65,15 @@ export default function TasksPage() {
   const [editingGroupId, setEditingGroupId] = useState<string | null>(null);
   const [editingGroupInput, setEditingGroupInput] = useState("");
   const [showCompletedTasks, setShowCompletedTasks] = useState(false);
+  const ITEMS_PER_PAGE = 10;
+  const [completedPage, setCompletedPage] = useState(1);
   const [dragGroupId, setDragGroupId] = useState<string | null>(null);
   const [dragOverGroupId, setDragOverGroupId] = useState<string | null>(null);
   const [dragOverGroupPosition, setDragOverGroupPosition] = useState<"before" | "after">("before");
   const [dragTaskId, setDragTaskId] = useState<string | null>(null);
   const [dragTaskOverTarget, setDragTaskOverTarget] = useState<string | null>(null); // groupId or "ungrouped"
+  const [recentlyDroppedTaskId, setRecentlyDroppedTaskId] = useState<string | null>(null);
+  const autoExpandedGroupsRef = useRef<Set<string>>(new Set());
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const groupInputRef = useRef<HTMLInputElement>(null);
@@ -79,6 +83,8 @@ export default function TasksPage() {
   const didGroupDropRef = useRef(false);
   const groupItemRefs = useRef<Record<string, HTMLLIElement | null>>({});
   const previousGroupTopsRef = useRef<Record<string, number>>({});
+  const groupContentRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const [groupHeights, setGroupHeights] = useState<Record<string, number>>({});
 
   useLayoutEffect(() => {
     const nextTops: Record<string, number> = {};
@@ -107,6 +113,27 @@ export default function TasksPage() {
 
     previousGroupTopsRef.current = nextTops;
   }, [groups]);
+
+  // Measure group content heights so we can animate max-height for smooth expand/collapse
+  useLayoutEffect(() => {
+    const nextHeights: Record<string, number> = {};
+    groups.forEach((group) => {
+      const el = groupContentRefs.current[group.id];
+      if (!el) return;
+      // scrollHeight gives the full height regardless of max-height
+      nextHeights[group.id] = el.scrollHeight;
+    });
+    setGroupHeights((prev) => {
+      // quick shallow compare to avoid unnecessary sets
+      const keys = Object.keys(nextHeights);
+      let changed = false;
+      if (Object.keys(prev).length !== keys.length) changed = true;
+      for (const k of keys) {
+        if (prev[k] !== nextHeights[k]) { changed = true; break; }
+      }
+      return changed ? nextHeights : prev;
+    });
+  }, [groups, tasks, taskComments, showGroupCompleted, showCompletedTasks]);
 
   useEffect(() => {
     const id = setTimeout(() => {
@@ -522,7 +549,7 @@ export default function TasksPage() {
     } else {
       dragGhost.style.background = "#ffffff";
       dragGhost.style.borderColor = "rgba(29,185,84,0.35)";
-      dragGhost.style.color = "#0f172a";
+      dragGhost.style.color = "#04130a";
     }
     document.body.appendChild(dragGhost);
     event.dataTransfer.setDragImage(dragGhost, 24, 24);
@@ -531,6 +558,24 @@ export default function TasksPage() {
 
   const handleGroupDragOver = (event: React.DragEvent, groupId: string) => {
     event.preventDefault();
+
+    // If a task is being dragged, treat the group header/row itself as a drop target
+    // so users can drop tasks into groups even when they're collapsed.
+    if (dragTaskId) {
+      setDragTaskOverTarget(groupId);
+      // Auto-expand collapsed group while dragging a task over it and remember to restore later
+      setCollapsedGroups((prev) => {
+        if (prev.has(groupId)) {
+          autoExpandedGroupsRef.current.add(groupId);
+          const next = new Set(prev);
+          next.delete(groupId);
+          return next;
+        }
+        return prev;
+      });
+      return;
+    }
+
     if (groupId === dragGroupId) {
       setDragOverGroupId(null);
       return;
@@ -569,12 +614,34 @@ export default function TasksPage() {
   };
 
   const handleGroupDrop = async (_targetGroupId: string) => {
+    // If a task is being dragged, treat this drop as moving the task into this group.
+    if (dragTaskId) {
+      await moveTaskToGroup(dragTaskId, _targetGroupId);
+      setRecentlyDroppedTaskId(dragTaskId);
+      setTimeout(() => setRecentlyDroppedTaskId(null), 700);
+      setDragTaskId(null);
+      setDragTaskOverTarget(null);
+
+      // Restore any groups we auto-expanded while dragging
+      if (autoExpandedGroupsRef.current.size > 0) {
+        setCollapsedGroups((prev) => {
+          const next = new Set(prev);
+          autoExpandedGroupsRef.current.forEach((id) => next.add(id));
+          autoExpandedGroupsRef.current.clear();
+          return next;
+        });
+      }
+
+      return;
+    }
+
     if (!dragGroupId) {
       setDragGroupId(null);
       setDragOverGroupId(null);
       setDragOverGroupPosition("before");
       return;
     }
+
     didGroupDropRef.current = true;
     const updated = groups.map((g, i) => ({ ...g, position: i }));
     setGroups(updated);
@@ -593,6 +660,15 @@ export default function TasksPage() {
     }
     setDragGroupId(null);
     setDragOverGroupId(null);
+    setDragTaskOverTarget(null);
+    if (autoExpandedGroupsRef.current.size > 0) {
+      setCollapsedGroups((prev) => {
+        const next = new Set(prev);
+        autoExpandedGroupsRef.current.forEach((id) => next.add(id));
+        autoExpandedGroupsRef.current.clear();
+        return next;
+      });
+    }
     setDragOverGroupPosition("before");
     initialGroupOrderRef.current = null;
     didGroupDropRef.current = false;
@@ -608,6 +684,13 @@ export default function TasksPage() {
   const handleTaskDragStart = (event: React.DragEvent, taskId: string) => {
     event.stopPropagation();
     setDragTaskId(taskId);
+    try {
+      // Ensure a drag is initiated in all browsers and mark it as a move
+      event.dataTransfer.setData("text/plain", taskId);
+      event.dataTransfer.effectAllowed = "move";
+    } catch (e) {
+      // ignore environments that block setData
+    }
   };
 
   const handleTaskDragOver = (event: React.DragEvent, target: string) => {
@@ -617,17 +700,38 @@ export default function TasksPage() {
     setDragTaskOverTarget(target);
   };
 
-  const handleTaskDrop = (event: React.DragEvent, targetGroupId: string | null) => {
+  const handleTaskDrop = async (event: React.DragEvent, targetGroupId: string | null) => {
     event.stopPropagation();
     if (!dragTaskId) return;
-    void moveTaskToGroup(dragTaskId, targetGroupId);
+    await moveTaskToGroup(dragTaskId, targetGroupId);
+    setRecentlyDroppedTaskId(dragTaskId);
+    setTimeout(() => setRecentlyDroppedTaskId(null), 700);
     setDragTaskId(null);
     setDragTaskOverTarget(null);
+
+    // Restore any groups we auto-expanded while dragging
+    if (autoExpandedGroupsRef.current.size > 0) {
+      setCollapsedGroups((prev) => {
+        const next = new Set(prev);
+        autoExpandedGroupsRef.current.forEach((id) => next.add(id));
+        autoExpandedGroupsRef.current.clear();
+        return next;
+      });
+    }
   };
 
   const handleTaskDragEnd = () => {
     setDragTaskId(null);
     setDragTaskOverTarget(null);
+
+    if (autoExpandedGroupsRef.current.size > 0) {
+      setCollapsedGroups((prev) => {
+        const next = new Set(prev);
+        autoExpandedGroupsRef.current.forEach((id) => next.add(id));
+        autoExpandedGroupsRef.current.clear();
+        return next;
+      });
+    }
   };
 
   const getSortedTasks = (taskList: Task[]) => {
@@ -681,7 +785,7 @@ export default function TasksPage() {
         // Dark mode uses Spotify-like green intensity steps.
         switch (importance) {
           case 0:
-            priorityBg = "bg-slate-800";
+            priorityBg = "spotify-panel-dark";
             break;
           case 1:
             priorityBg = "bg-emerald-400/8";
@@ -703,7 +807,7 @@ export default function TasksPage() {
         // Light mode uses stronger tints for quick scanning.
         switch (importance) {
           case 0:
-            priorityBg = "bg-white";
+            priorityBg = "spotify-panel-light";
             break;
           case 1:
             priorityBg = "bg-emerald-50";
@@ -726,13 +830,14 @@ export default function TasksPage() {
 
     const cardClass = `${baseBorder} ${priorityBg}`;
 
+    // Use Spotify-themed dot/button classes
     const dotClass = task.is_complete
       ? isDarkMode
-        ? "border-emerald-400 bg-emerald-400 text-slate-950 hover:bg-emerald-300"
-        : "border-emerald-600 bg-emerald-600 text-white hover:bg-emerald-500"
+        ? "dot-complete-dark"
+        : "dot-complete-light"
       : isDarkMode
-        ? "border-slate-500 bg-slate-800 text-slate-200 hover:border-emerald-300 hover:text-emerald-200"
-        : "border-slate-400 bg-white text-slate-700 hover:border-emerald-600 hover:text-emerald-700";
+        ? "dot-incomplete-dark"
+        : "dot-incomplete-light";
     const deleteClass = isDarkMode ? "text-slate-600 hover:text-slate-400" : "text-slate-400 hover:text-slate-500";
 
     const isTaskDragging = dragTaskId === task.id;
@@ -746,16 +851,17 @@ export default function TasksPage() {
         draggable
         onDragStart={(e) => handleTaskDragStart(e, task.id)}
         onDragEnd={handleTaskDragEnd}
-        className={`rounded-xl shadow-sm hover:shadow-md border-l-4 border-l-emerald-500 px-3 py-2 transition hover:translate-x-1 ${cardClass} ${isTaskDragging ? "opacity-40" : "opacity-100"} ${isTaskSelected ? (isDarkMode ? "ring-2 ring-emerald-400/60" : "ring-2 ring-emerald-500/40") : ""}`}
+        className={`rounded-xl shadow-sm hover:shadow-md border-l-4 px-3 py-2 transition hover:translate-x-1 ${cardClass} ${isTaskDragging ? "opacity-40" : "opacity-100"} ${isTaskSelected ? (isDarkMode ? "ring-spotify-dark" : "ring-spotify-light") : ""}${recentlyDroppedTaskId === task.id ? " watery-drop" : ""}`}
+        style={{ borderLeftColor: 'var(--spotify-green)' }}
       >
         <div
           className="flex items-start gap-2"
           onClick={(e) => handleTaskCardClick(e, task.id)}
         >
-          <button
+            <button
             type="button"
             onClick={() => toggleTask(task)}
-            className={`mt-0.5 h-9 w-9 flex items-center justify-center rounded-full border text-base font-bold transition ${dotClass} focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400 focus-visible:ring-offset-2 ${isDarkMode ? "focus-visible:ring-offset-slate-800" : "focus-visible:ring-offset-white"}`}
+            className={`mt-0.5 h-9 w-9 flex items-center justify-center rounded-full border text-base font-bold transition ${dotClass} focus-ring-spotify focus-visible:outline-none`}
             aria-label={task.is_complete ? "Mark task as incomplete" : "Mark task as complete"}
             aria-pressed={task.is_complete}
             title={task.is_complete ? "Completed" : "Not completed"}
@@ -771,7 +877,7 @@ export default function TasksPage() {
                 value={editingTaskInput}
                 onChange={(e) => setEditingTaskInput(e.target.value)}
                 onKeyDown={(e) => handleTaskEditEnter(e, task.id)}
-                className={`w-full rounded-lg border px-3 py-2 text-sm outline-none ${inputClass}`}
+                className={`w-full rounded-lg border px-3 py-2 text-sm outline-none ${inputClassWithWater}`}
               />
               <p className={`mt-2 text-xs ${mutedText}`}>Color intensity reflects importance.</p>
             </div>
@@ -783,7 +889,7 @@ export default function TasksPage() {
 
               <div className="mt-2 flex min-h-5 items-center gap-2">
                 <span
-                  className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${isDarkMode ? "bg-slate-700 text-slate-300" : "bg-slate-200 text-slate-600"}`}
+                  className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${isDarkMode ? "comment-pill-dark" : "comment-pill-light"}`}
                 >
                   {commentsForTask.length} comment{commentsForTask.length !== 1 ? "s" : ""}
                 </span>
@@ -804,7 +910,7 @@ export default function TasksPage() {
                 <button
                   type="button"
                   onClick={() => saveTaskEdit(task.id)}
-                  className={isDarkMode ? "text-sm text-emerald-400 transition hover:text-emerald-300" : "text-sm text-emerald-600 transition hover:text-emerald-500"}
+                  className={`text-sm text-spotify-accent transition`}
                 >
                   Save
                 </button>
@@ -821,7 +927,7 @@ export default function TasksPage() {
                 <button
                   type="button"
                   onClick={() => startTaskEdit(task)}
-                  className={isDarkMode ? "text-sm text-emerald-300 transition hover:text-emerald-200" : "text-sm text-emerald-700 transition hover:text-emerald-600"}
+                  className={`text-sm text-spotify-accent transition`}
                   aria-label="Edit task"
                 >
                   Edit
@@ -870,6 +976,14 @@ export default function TasksPage() {
   const completedDailyTasks = dailyTasks.filter((t) => t.is_complete);
   const ungroupedIncompleteTasks = incompleteDailyTasks.filter((t) => t.group_id === null);
   const ungroupedCompletedTasks = completedDailyTasks.filter((t) => t.group_id === null);
+  const totalCompletedPages = Math.max(1, Math.ceil(ungroupedCompletedTasks.length / ITEMS_PER_PAGE));
+  const paginatedUngroupedCompletedTasks = ungroupedCompletedTasks.slice((completedPage - 1) * ITEMS_PER_PAGE, completedPage * ITEMS_PER_PAGE);
+  useEffect(() => {
+    const total = Math.max(1, Math.ceil(ungroupedCompletedTasks.length / ITEMS_PER_PAGE));
+    if (completedPage > total) {
+      setCompletedPage(total);
+    }
+  }, [ungroupedCompletedTasks.length]);
   const selectedTask = selectedTaskId ? dailyTasks.find((t) => t.id === selectedTaskId) ?? null : null;
   const commentsByTask = taskComments.reduce<Record<string, TaskComment[]>>((acc, comment) => {
     if (!acc[comment.task_id]) {
@@ -892,6 +1006,10 @@ export default function TasksPage() {
     ? "border-slate-700 bg-[#121212] text-slate-100 placeholder:text-slate-500 focus-visible:border-emerald-400 focus-visible:ring-2 focus-visible:ring-emerald-400/60"
     : "border-slate-300 bg-white text-slate-900 placeholder:text-slate-400 focus-visible:border-emerald-500 focus-visible:ring-2 focus-visible:ring-emerald-400/50";
 
+  // Watery variants
+  const panelClassWithWater = `${panelClass} watery-panel`;
+  const inputClassWithWater = `${inputClass} watery-input`;
+
   if (isLoading) {
     return (
       <main className="flex min-h-screen items-center justify-center">
@@ -902,8 +1020,8 @@ export default function TasksPage() {
 
   return (
     <main className="relative min-h-screen overflow-hidden p-8">
-      <div className={`pointer-events-none absolute -left-24 -top-24 h-80 w-80 rounded-full blur-3xl ${isDarkMode ? "bg-emerald-500/18" : "bg-emerald-200/65"}`} />
-      <div className={`pointer-events-none absolute -right-20 top-40 h-72 w-72 rounded-full blur-3xl ${isDarkMode ? "bg-lime-500/10" : "bg-lime-200/45"}`} />
+      <div className={`pointer-events-none absolute -left-24 -top-24 h-80 w-80 rounded-full blur-3xl ${isDarkMode ? "spotify-glow-left-dark" : "spotify-glow-left-light"}`} />
+      <div className={`pointer-events-none absolute -right-20 top-40 h-72 w-72 rounded-full blur-3xl ${isDarkMode ? "spotify-glow-right-dark" : "spotify-glow-right-light"}`} />
       <section className="relative z-10 mx-auto max-w-7xl">
         <header className="mb-6 flex flex-wrap items-start justify-between gap-4">
           <div className="flex items-center gap-6">
@@ -918,16 +1036,16 @@ export default function TasksPage() {
 
             {tasks.length > 0 ? (
               <div className="grid grid-cols-3 gap-3">
-                <div className={`min-w-[90px] rounded-xl border p-3 text-center transition hover:-translate-y-0.5 hover:shadow-lg ${panelClass} ${isDarkMode ? "border-emerald-400/50 bg-emerald-500/14" : "border-emerald-300 bg-emerald-50"}`}>
-                  <p className={`text-2xl font-bold ${isDarkMode ? "text-emerald-300" : "text-emerald-700"}`}>{completedCount}</p>
-                  <p className={`text-xs ${isDarkMode ? "text-emerald-200/85" : "text-emerald-700/80"}`}>Completed</p>
+                <div className={`min-w-[90px] rounded-xl border p-3 text-center transition hover:-translate-y-0.5 hover:shadow-lg ${panelClassWithWater} ${isDarkMode ? "spotify-accent-panel-dark" : "spotify-accent-panel"}`}>
+                  <p className={`text-2xl font-bold text-spotify-accent`}>{completedCount}</p>
+                  <p className={`text-xs ${mutedText}`}>Completed</p>
                 </div>
-                <div className={`min-w-[90px] rounded-xl border p-3 text-center transition hover:-translate-y-0.5 hover:shadow-lg ${panelClass} ${isDarkMode ? "border-lime-300/70 bg-lime-400/18 shadow-[0_0_0_1px_rgba(163,230,53,0.25)]" : "border-lime-400 bg-lime-100 shadow-[0_0_0_1px_rgba(132,204,22,0.25)]"}`}>
-                  <p className={`text-2xl font-extrabold ${isDarkMode ? "text-lime-200" : "text-lime-800"}`}>{pendingCount}</p>
-                  <p className={`text-xs font-semibold ${isDarkMode ? "text-lime-100/90" : "text-lime-800/85"}`}>Pending</p>
+                <div className={`min-w-[90px] rounded-xl border p-3 text-center transition hover:-translate-y-0.5 hover:shadow-lg ${panelClassWithWater} ${isDarkMode ? "spotify-accent-panel-dark" : "spotify-accent-panel"}`}>
+                  <p className={`text-2xl font-extrabold text-spotify-accent`}>{pendingCount}</p>
+                  <p className={`text-xs font-semibold ${mutedText}`}>Pending</p>
                 </div>
-                <div className={`min-w-[90px] rounded-xl border p-3 text-center transition hover:-translate-y-0.5 hover:shadow-lg ${panelClass} ${isDarkMode ? "border-slate-600 bg-slate-800/70" : "border-slate-200 bg-slate-50/80"}`}>
-                  <p className={`text-2xl font-bold ${isDarkMode ? "text-slate-200" : "text-slate-700"}`}>{tasks.length}</p>
+                <div className={`min-w-[90px] rounded-xl border p-3 text-center transition hover:-translate-y-0.5 hover:shadow-lg ${panelClassWithWater} ${isDarkMode ? "spotify-accent-panel-dark" : "spotify-accent-panel"}`}>
+                  <p className={`text-2xl font-bold text-spotify-accent`}>{tasks.length}</p>
                   <p className={`text-xs ${mutedText}`}>Total Tasks</p>
                 </div>
               </div>
@@ -937,7 +1055,7 @@ export default function TasksPage() {
           <div className="flex items-center gap-2">
             <button
               onClick={() => setIsDarkMode((current) => !current)}
-              className={`rounded-xl border px-3 py-2 text-sm font-semibold transition hover:-translate-y-0.5 hover:shadow-md ${isDarkMode ? "border-emerald-400/45 bg-[#121212]/70 text-emerald-200 hover:bg-[#121212]" : "border-emerald-300 bg-white/80 text-emerald-700 hover:bg-white"}`}
+              className={`rounded-xl border px-3 py-2 text-sm font-semibold transition hover:-translate-y-0.5 hover:shadow-md ${isDarkMode ? "border-emerald-400/45 bg-[#121212]/70 text-spotify-accent hover:bg-[#121212]" : "border-emerald-300 bg-white/80 text-spotify-accent hover:bg-white"}`}
             >
               {isDarkMode ? "☀️" : "🌙"}
             </button>
@@ -959,7 +1077,7 @@ export default function TasksPage() {
         <div className="grid gap-8 md:grid-cols-[minmax(0,2.35fr)_minmax(280px,0.9fr)]">
           <section className="flex flex-col gap-4">
             <h2 className={`flex items-center gap-2 text-2xl font-bold ${shellText}`}>
-              <span className="h-8 w-1 rounded bg-gradient-to-b from-[#1ed760] to-[#1db954]" />Tasks
+              <span className="h-8 w-1 rounded spotify-gradient-vertical" />Tasks
             </h2>
 
             {showGroupInput ? (
@@ -971,9 +1089,9 @@ export default function TasksPage() {
                   onChange={(e) => setGroupInput(e.target.value)}
                   onKeyDown={handleGroupEnter}
                   placeholder="Group name..."
-                  className={`w-full rounded-lg border px-3 py-2 outline-none ${inputClass}`}
+                  className={`w-full rounded-lg border px-3 py-2 outline-none ${inputClassWithWater}`}
                 />
-                <button type="button" onClick={() => createGroup()} className="rounded-xl bg-gradient-to-r from-[#1ed760] to-[#1db954] px-4 py-2 text-sm font-semibold text-[#04130a] shadow-sm transition hover:-translate-y-0.5 hover:from-[#2af06e] hover:to-[#22c55e] hover:shadow-md">Create</button>
+                <button type="button" onClick={() => createGroup()} className="rounded-xl spotify-gradient px-4 py-2 text-sm font-semibold text-spotify-on-green shadow-sm transition hover:spotify-gradient-hover watery-button">Create</button>
                 <button type="button" onClick={() => { setShowGroupInput(false); setGroupInput(""); }} className={`rounded-lg border px-3 py-2 text-sm ${isDarkMode ? "border-slate-600 text-slate-400" : "border-slate-200 text-slate-500"}`}>Cancel</button>
               </div>
             ) : (
@@ -985,19 +1103,19 @@ export default function TasksPage() {
                   onChange={(event) => setDailyInput(event.target.value)}
                   onKeyDown={handleEnter}
                   placeholder="Add a daily task..."
-                  className={`w-full rounded-lg border px-3 py-2 outline-none ${inputClass}`}
+                    className={`w-full rounded-lg border px-3 py-2 outline-none ${inputClassWithWater}`}
                 />
                 <button
                   type="button"
                   onClick={() => addTask()}
-                  className="rounded-xl bg-gradient-to-r from-[#1ed760] to-[#1db954] px-4 py-2 text-sm font-semibold text-[#04130a] shadow-sm transition hover:-translate-y-0.5 hover:from-[#2af06e] hover:to-[#22c55e] hover:shadow-md"
+                  className="rounded-xl spotify-gradient px-4 py-2 text-sm font-semibold text-spotify-on-green shadow-sm transition hover:spotify-gradient-hover watery-button"
                 >
                   Add
                 </button>
                 <button
                   type="button"
                   onClick={() => setShowGroupInput(true)}
-                  className={`rounded-xl border px-4 py-2 text-sm font-semibold transition hover:-translate-y-0.5 hover:shadow-sm ${isDarkMode ? "border-slate-600 bg-[#121212]/70 text-emerald-300 hover:border-emerald-400 hover:text-emerald-200" : "border-slate-200 bg-white/80 text-emerald-700 hover:border-emerald-300 hover:text-emerald-600"}`}
+                  className={`rounded-xl border px-4 py-2 text-sm font-semibold transition hover:-translate-y-0.5 hover:shadow-sm ${isDarkMode ? "border-slate-600 bg-[#121212]/70 text-spotify-accent hover:border-slate-500" : "border-slate-200 bg-white/80 text-spotify-accent hover:border-slate-300"}`}
                 >
                   + Group
                 </button>
@@ -1017,9 +1135,10 @@ export default function TasksPage() {
                     const isGroupCompletedVisible = showGroupCompleted.has(group.id);
                     const isDragging = dragGroupId === group.id;
                     const isDragOver = dragOverGroupId === group.id;
+                    const isTaskDragOver = dragTaskOverTarget === group.id;
                     const dropBefore = isDragOver && dragOverGroupPosition === "before";
                     const dropAfter = isDragOver && dragOverGroupPosition === "after";
-                    const groupBorderClass = isDragOver
+                    const groupBorderClass = (isDragOver || isTaskDragOver)
                       ? isDarkMode ? "border-emerald-400 bg-[#212121]/95 shadow-[0_0_0_1px_rgba(29,185,84,0.45)] ring-2 ring-emerald-400/35" : "border-emerald-400 bg-emerald-50/90 ring-2 ring-emerald-300/60"
                       : isDarkMode ? "border-emerald-500/35 bg-[#1a1a1a]/90 shadow-[0_6px_18px_rgba(29,185,84,0.10)]" : "border-emerald-300 bg-white/92 shadow-[0_6px_14px_rgba(29,185,84,0.10)]";
                     const groupHeaderClass = isDarkMode
@@ -1031,7 +1150,7 @@ export default function TasksPage() {
                         ref={(element) => {
                           groupItemRefs.current[group.id] = element;
                         }}
-                        className={`relative rounded-xl border ${groupBorderClass} overflow-hidden will-change-transform transition-all duration-300 ${isDragging ? "opacity-0" : "opacity-100"}`}
+                        className={`relative rounded-xl border ${groupBorderClass} ${isDragOver || isTaskDragOver ? 'watery-highlight' : ''} overflow-hidden will-change-transform transition-all duration-300 ${isDragging ? "opacity-0" : "opacity-100"}`}
                         draggable
                         onDragStart={(e) => handleGroupDragStart(e, group.id)}
                         onDragOver={(e) => handleGroupDragOver(e, group.id)}
@@ -1059,28 +1178,33 @@ export default function TasksPage() {
                                 value={editingGroupInput}
                                 onChange={(e) => setEditingGroupInput(e.target.value)}
                                 onKeyDown={(e) => handleGroupEditEnter(e, group.id)}
-                                className={`flex-1 rounded border px-2 py-1 text-sm outline-none ${inputClass}`}
+                                className={`flex-1 rounded border px-2 py-1 text-sm outline-none ${inputClassWithWater}`}
                                 autoFocus
                               />
-                              <button type="button" onClick={() => saveGroupEdit(group.id)} className={isDarkMode ? "text-xs text-emerald-400 hover:text-emerald-300" : "text-xs text-emerald-600 hover:text-emerald-500"}>Save</button>
+                              <button type="button" onClick={() => saveGroupEdit(group.id)} className={`text-xs text-spotify-accent`}>Save</button>
                               <button type="button" onClick={cancelGroupEdit} className={isDarkMode ? "text-xs text-slate-400 hover:text-slate-300" : "text-xs text-slate-500 hover:text-slate-400"}>Cancel</button>
                             </div>
                           ) : (
                             <>
                               <span className={`flex-1 text-sm font-semibold ${shellText}`}>{group.title}</span>
                               <span className={`text-xs ${mutedText}`}>{groupIncompleteTasks.length} task{groupIncompleteTasks.length !== 1 ? "s" : ""}</span>
-                              <button type="button" onClick={(e) => { e.stopPropagation(); startGroupEdit(group); }} className={isDarkMode ? "text-xs text-emerald-300 hover:text-emerald-200" : "text-xs text-emerald-700 hover:text-emerald-600"}>Edit</button>
+                              <button type="button" onClick={(e) => { e.stopPropagation(); startGroupEdit(group); }} className={`text-xs text-spotify-accent`}>Edit</button>
                               <button type="button" onClick={(e) => { e.stopPropagation(); removeGroup(group.id); }} className={isDarkMode ? "text-xs text-slate-500 hover:text-slate-400" : "text-xs text-slate-400 hover:text-slate-500"}>Delete</button>
                             </>
                           )}
                         </div>
-                        {!isCollapsed && (
-                          <div
-                            className={`px-2 pb-2 pt-1 rounded-b-lg transition-colors ${dragTaskOverTarget === group.id ? (isDarkMode ? "bg-emerald-900/35" : "bg-emerald-50/95") : (isDarkMode ? "bg-[#181818]/60" : "bg-white/85")}`}
-                            onDragOver={(e) => handleTaskDragOver(e, group.id)}
-                            onDrop={(e) => handleTaskDrop(e, group.id)}
-                            onDragLeave={() => setDragTaskOverTarget(null)}
-                          >
+                        <div
+                          ref={(el) => { groupContentRefs.current[group.id] = el; }}
+                          className={`group-content px-2 pb-2 pt-1 rounded-b-lg transition-colors ${dragTaskOverTarget === group.id ? (isDarkMode ? "bg-spotify-drag-dark" : "bg-spotify-drag-light") : (isDarkMode ? "spotify-panel-dark" : "spotify-panel-light")}`}
+                          onDragOver={(e) => handleTaskDragOver(e, group.id)}
+                          onDrop={(e) => handleTaskDrop(e, group.id)}
+                          onDragLeave={() => setDragTaskOverTarget(null)}
+                          style={{
+                            maxHeight: collapsedGroups.has(group.id) ? "0px" : `${groupHeights[group.id] ?? 0}px`,
+                            overflow: "hidden",
+                          }}
+                        >
+                          <div className="group-inner" style={{ opacity: collapsedGroups.has(group.id) ? 0 : 1, transform: collapsedGroups.has(group.id) ? "translateY(-6px)" : "translateY(0)" }}>
                             <div className="mb-2 flex gap-2">
                               <input
                                 type="text"
@@ -1088,12 +1212,12 @@ export default function TasksPage() {
                                 onChange={(e) => setGroupTaskInputs((current) => ({ ...current, [group.id]: e.target.value }))}
                                 onKeyDown={(e) => handleGroupTaskEnter(e, group.id)}
                                 placeholder="Add a task to this group..."
-                                className={`w-full rounded-lg border px-3 py-2 text-sm outline-none ${inputClass}`}
+                                className={`w-full rounded-lg border px-3 py-2 text-sm outline-none ${inputClassWithWater}`}
                               />
                               <button
                                 type="button"
                                 onClick={() => addGroupTask(group.id)}
-                                className="rounded-lg bg-gradient-to-r from-[#1ed760] to-[#1db954] px-3 py-2 text-xs font-semibold text-[#04130a] shadow-sm transition hover:-translate-y-0.5 hover:from-[#2af06e] hover:to-[#22c55e]"
+                                className="rounded-lg spotify-gradient px-3 py-2 text-xs font-semibold text-spotify-on-green shadow-sm transition hover:spotify-gradient-hover"
                               >
                                 Add
                               </button>
@@ -1114,7 +1238,7 @@ export default function TasksPage() {
                                     e.stopPropagation();
                                     toggleGroupCompleted(group.id);
                                   }}
-                                  className={`w-full text-left rounded-lg border px-3 py-1 text-xs font-semibold ${panelClass}`}
+                                  className={`w-full text-left rounded-lg border px-3 py-1 text-xs font-semibold ${panelClassWithWater}`}
                                 >
                                   <div className="flex items-center justify-between">
                                     <span className={isDarkMode ? "text-slate-100" : "text-slate-800"}>Completed Tasks</span>
@@ -1123,7 +1247,7 @@ export default function TasksPage() {
                                 </button>
 
                                 {isGroupCompletedVisible ? (
-                                  <div className={`mt-2 rounded-lg border p-2 ${panelClass}`}>
+                                  <div className={`mt-2 rounded-lg border p-2 ${panelClassWithWater}`}>
                                     <ul className="space-y-2 pr-1">
                                       {groupCompletedTasks.map((task) => renderTaskRow(task))}
                                     </ul>
@@ -1132,18 +1256,34 @@ export default function TasksPage() {
                               </div>
                             ) : null}
                           </div>
-                        )}
+                        </div>
 
                       </li>
                     );
                   })}
+                  <div
+                    className={`mb-2 rounded-md border px-3 py-2 transition select-none ${dragTaskOverTarget === "ungrouped" ? (isDarkMode ? "bg-emerald-900/25 ring-2 ring-emerald-400/30" : "bg-emerald-50/90 ring-2 ring-emerald-300/40") : ""}`}
+                    onDragOver={(e) => handleTaskDragOver(e, "ungrouped")}
+                    onDrop={(e) => handleTaskDrop(e, null)}
+                    onDragLeave={() => setDragTaskOverTarget(null)}
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className={`text-sm font-semibold ${shellText}`}>Ungrouped</span>
+                      <span className={`text-xs ${mutedText}`}>{ungroupedIncompleteTasks.length} task{ungroupedIncompleteTasks.length !== 1 ? "s" : ""}</span>
+                    </div>
+                  </div>
+
                   <div
                     className={`space-y-2 rounded-lg p-1 transition-colors ${dragTaskOverTarget === "ungrouped" ? (isDarkMode ? "bg-slate-700/50" : "bg-slate-100") : ""}`}
                     onDragOver={(e) => handleTaskDragOver(e, "ungrouped")}
                     onDrop={(e) => handleTaskDrop(e, null)}
                     onDragLeave={() => setDragTaskOverTarget(null)}
                   >
-                    {ungroupedIncompleteTasks.map((task) => renderTaskRow(task))}
+                    {ungroupedIncompleteTasks.length === 0 ? (
+                      <div className={`py-4 text-center text-sm ${mutedText}`}>No ungrouped tasks</div>
+                    ) : (
+                      ungroupedIncompleteTasks.map((task) => renderTaskRow(task))
+                    )}
                   </div>
                 </>
               )}
@@ -1154,7 +1294,7 @@ export default function TasksPage() {
                 <button
                   type="button"
                   onClick={() => setShowCompletedTasks((s) => !s)}
-                  className={`w-full text-left rounded-xl border px-3 py-2 font-semibold transition hover:-translate-y-0.5 hover:shadow-sm ${panelClass}`}
+                  className={`w-full text-left rounded-xl border px-3 py-2 font-semibold transition hover:-translate-y-0.5 hover:shadow-sm ${panelClassWithWater}`}
                 >
                   <div className="flex items-center justify-between">
                     <span className={isDarkMode ? "text-slate-100" : "text-slate-800"}>Completed Tasks</span>
@@ -1163,10 +1303,33 @@ export default function TasksPage() {
                 </button>
 
                 {showCompletedTasks ? (
-                  <div className={`mt-2 rounded-lg border p-2 ${panelClass}`}>
+                  <div className={`mt-2 rounded-lg border p-2 ${panelClassWithWater}`}>
                     <ul className="space-y-2 pr-1">
-                      {ungroupedCompletedTasks.map((task) => renderTaskRow(task))}
+                      {paginatedUngroupedCompletedTasks.map((task) => renderTaskRow(task))}
                     </ul>
+                    {ungroupedCompletedTasks.length > ITEMS_PER_PAGE ? (
+                      <div className="mt-3 flex items-center justify-between">
+                        <button
+                          type="button"
+                          onClick={() => setCompletedPage((p) => Math.max(1, p - 1))}
+                          disabled={completedPage <= 1}
+                          className={`rounded-lg border px-3 py-1 text-sm font-semibold ${isDarkMode ? "border-slate-700 text-slate-200 disabled:opacity-40" : "border-slate-200 text-slate-700 disabled:opacity-40"}`}
+                        >
+                          ◀ Prev
+                        </button>
+
+                        <div className={`text-sm ${mutedText}`}>Page {completedPage} of {totalCompletedPages}</div>
+
+                        <button
+                          type="button"
+                          onClick={() => setCompletedPage((p) => Math.min(totalCompletedPages, p + 1))}
+                          disabled={completedPage >= totalCompletedPages}
+                          className={`rounded-lg border px-3 py-1 text-sm font-semibold ${isDarkMode ? "border-slate-700 text-slate-200 disabled:opacity-40" : "border-slate-200 text-slate-700 disabled:opacity-40"}`}
+                        >
+                          Next ▶
+                        </button>
+                      </div>
+                    ) : null}
                   </div>
                 ) : null}
               </div>
@@ -1175,10 +1338,10 @@ export default function TasksPage() {
 
           <section className="flex flex-col gap-4">
             <h2 className={`flex items-center gap-2 text-2xl font-bold ${shellText}`}>
-              <span className="h-8 w-1 rounded bg-gradient-to-b from-[#1ed760] to-[#1db954]" />Comments
+              <span className="h-8 w-1 rounded spotify-gradient-vertical" />Comments
             </h2>
 
-            <div className={`flex min-h-[64vh] flex-col rounded-xl border transition hover:shadow-lg ${panelClass} ${isDarkMode ? "bg-[#181818]/95" : "bg-white/95"}`}>
+            <div className={`flex min-h-[64vh] flex-col rounded-xl border overflow-hidden transition hover:shadow-lg ${panelClassWithWater} ${isDarkMode ? "bg-[#181818]/95" : "bg-white/95"}`}>
               {dailyTasks.length === 0 ? (
                 <div className="flex flex-1 items-center justify-center px-6">
                   <p className={`text-center text-lg ${mutedText}`}>Add daily tasks to start discussions</p>
@@ -1189,7 +1352,7 @@ export default function TasksPage() {
                 </div>
               ) : (
                 <div className="flex flex-1 flex-col">
-                  <div className={`border-b px-4 py-3 ${panelEdgeClass} ${isDarkMode ? "bg-[#121212]/55" : "bg-emerald-50/70"}`}>
+                  <div className={`border-b px-4 py-3 rounded-t-xl ${panelEdgeClass} ${isDarkMode ? "spotify-panel-dark" : "spotify-panel-light"}`}>
                     <p className={`text-[11px] font-semibold uppercase tracking-wide ${mutedText}`}>Discussion</p>
                     <p className={`mt-1 text-sm font-semibold ${shellText}`}>{selectedTask.title}</p>
                     <p className={`mt-1 text-xs ${mutedText}`}>{selectedTaskComments.length} comment{selectedTaskComments.length !== 1 ? "s" : ""}</p>
@@ -1211,13 +1374,13 @@ export default function TasksPage() {
                                 value={editingCommentInput}
                                 onChange={(e) => setEditingCommentInput(e.target.value)}
                                 onKeyDown={(e) => handleCommentEditEnter(e, comment.id)}
-                                className={`w-full rounded-lg border px-3 py-2 text-sm outline-none ${inputClass}`}
+                                className={`w-full rounded-lg border px-3 py-2 text-sm outline-none ${inputClassWithWater}`}
                               />
                               <div className="mt-2 flex items-center gap-3">
                                 <button
                                   type="button"
                                   onClick={() => saveCommentEdit(comment.id)}
-                                  className={isDarkMode ? "text-xs font-semibold text-emerald-400 transition hover:text-emerald-300" : "text-xs font-semibold text-emerald-600 transition hover:text-emerald-500"}
+                                  className={`text-xs font-semibold text-spotify-accent transition`}
                                 >
                                   Save
                                 </button>
@@ -1239,7 +1402,7 @@ export default function TasksPage() {
                                   <button
                                     type="button"
                                     onClick={() => startCommentEdit(comment)}
-                                    className={isDarkMode ? "text-xs font-semibold text-emerald-300 transition hover:text-emerald-200" : "text-xs font-semibold text-emerald-700 transition hover:text-emerald-600"}
+                                    className={`text-xs font-semibold text-spotify-accent transition`}
                                   >
                                     Edit
                                   </button>
@@ -1267,12 +1430,12 @@ export default function TasksPage() {
                         onChange={(event) => setCurrentCommentInput(event.target.value)}
                         onKeyDown={(event) => handleCommentEnter(event, selectedTask.id)}
                         placeholder="Add a comment..."
-                        className={`w-full rounded-lg border px-3 py-2 text-sm outline-none ${inputClass}`}
+                        className={`w-full rounded-lg border px-3 py-2 text-sm outline-none ${inputClassWithWater}`}
                       />
                       <button
                         type="button"
                         onClick={() => addComment(selectedTask.id)}
-                        className="rounded-lg bg-gradient-to-r from-[#1ed760] to-[#1db954] px-3 py-2 text-xs font-semibold text-[#04130a] shadow-sm transition hover:-translate-y-0.5 hover:from-[#2af06e] hover:to-[#22c55e]"
+                        className="rounded-lg spotify-gradient px-3 py-2 text-xs font-semibold text-spotify-on-green shadow-sm transition hover:spotify-gradient-hover"
                       >
                         Add
                       </button>

@@ -2,7 +2,7 @@
 
 :root {
   --background: #f1f5f9;
-  --foreground: #1e293b;
+  --foreground: #04130a; /* replaced blue-slate foreground with spotify-on-green */
 }
 
 @theme inline {
@@ -33,3 +33,202 @@ body.dark-mode {
 .header-title {
   font-family: var(--font-playfair), serif;
 }
+
+/* Hide the default/native scrollbar but keep scrolling functional
+   - Use the .no-scrollbar class on any container you want to hide the scrollbar for
+   - Also applied to html/body to hide the page scrollbar globally */
+html, body, .no-scrollbar {
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* IE 10+ */
+}
+html::-webkit-scrollbar, body::-webkit-scrollbar, .no-scrollbar::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
+
+/* Watery UI tweaks */
+:root {
+  --ui-duration: 420ms;
+  --ui-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --water-accent: rgba(29,185,84,0.14);
+  --glass-light: rgba(255,255,255,0.7);
+  --glass-dark: rgba(18,18,18,0.55);
+  /* Spotify-themed color tokens (vibrant) */
+  --spotify-green: #1DB954;
+  --spotify-green-bright: #1FFB64; /* brighter accent */
+  --spotify-green-accent: #2AF06E;
+  --spotify-green-rgb: 29,185,84;
+  --spotify-on-green: #04130a;
+  --spotify-panel-light-bg: rgba(29,185,84,0.10);
+  --spotify-panel-dark-bg: rgba(29,185,84,0.14);
+  --spotify-glow-strong: 0.30;
+  --spotify-glow-medium: 0.18;
+}
+
+.watery-panel {
+  transition: background var(--ui-duration) var(--ui-ease), box-shadow var(--ui-duration) var(--ui-ease), transform var(--ui-duration) var(--ui-ease), border-color var(--ui-duration) var(--ui-ease);
+  backdrop-filter: blur(10px) saturate(1.06);
+  -webkit-backdrop-filter: blur(10px) saturate(1.06);
+  border-radius: 12px;
+}
+
+.watery-input {
+  transition: box-shadow var(--ui-duration) var(--ui-ease), border-color var(--ui-duration) var(--ui-ease), transform var(--ui-duration) var(--ui-ease);
+  border-radius: 10px;
+}
+
+.watery-button {
+  transition: transform var(--ui-duration) var(--ui-ease), box-shadow var(--ui-duration) var(--ui-ease), opacity var(--ui-duration) var(--ui-ease);
+}
+.watery-button:hover { transform: translateY(-3px) scale(1.01); }
+
+.watery-drop {
+  animation: watery-pop 520ms var(--ui-ease);
+  box-shadow: 0 20px 60px rgba(var(--spotify-green-rgb), 0.24) !important;
+  transform-origin: center;
+  filter: saturate(1.08);
+}
+
+@keyframes watery-pop {
+  0% { transform: scale(0.98); opacity: 0; filter: blur(1px); }
+  55% { transform: scale(1.04); opacity: 1; filter: blur(0); }
+  100% { transform: scale(1); opacity: 1; filter: blur(0); }
+}
+
+.watery-highlight {
+  box-shadow: 0 18px 64px rgba(var(--spotify-green-rgb), var(--spotify-glow-medium));
+  border-color: rgba(var(--spotify-green-rgb), 0.65) !important;
+  transform: translateZ(0);
+}
+
+/* Dot (complete/incomplete) button styles */
+.dot-complete-dark {
+  border: 1px solid rgba(var(--spotify-green-rgb), 0.96);
+  background-color: rgba(var(--spotify-green-rgb), 0.96);
+  color: var(--spotify-on-green);
+}
+.dot-complete-dark:hover { background-color: rgba(var(--spotify-green-rgb), 0.86); }
+.dot-complete-light {
+  border: 1px solid rgba(var(--spotify-green-rgb), 1);
+  background-color: rgba(var(--spotify-green-rgb), 1);
+  color: white;
+}
+.dot-complete-light:hover { background-color: rgba(var(--spotify-green-rgb), 0.92); }
+.dot-incomplete-dark {
+  border: 1px solid rgba(var(--spotify-green-rgb), 0.18);
+  background-color: rgba(18,18,18,0.56);
+  color: rgba(255,255,255,0.92);
+}
+.dot-incomplete-dark:hover { border-color: rgba(var(--spotify-green-rgb), 0.28); }
+.dot-incomplete-light {
+  border: 1px solid rgba(var(--spotify-green-rgb), 0.12);
+  background-color: white;
+  color: var(--spotify-on-green);
+}
+.dot-incomplete-light:hover { border-color: rgba(var(--spotify-green-rgb), 0.2); }
+
+/* Comment pill */
+.comment-pill-dark {
+  background: linear-gradient(90deg, rgba(var(--spotify-green-rgb), 0.10), rgba(var(--spotify-green-rgb), 0.06));
+  color: rgba(255,255,255,0.9);
+}
+.comment-pill-light {
+  background: linear-gradient(90deg, rgba(var(--spotify-green-rgb), 0.08), rgba(var(--spotify-green-rgb), 0.04));
+  color: var(--spotify-on-green);
+}
+
+/* Focus ring helper for interactive controls */
+.focus-ring-spotify:focus-visible {
+  box-shadow: 0 8px 30px rgba(var(--spotify-green-rgb), 0.18);
+  outline: none;
+}
+
+/* Spotify theme helpers */
+.spotify-gradient {
+  background-image: linear-gradient(90deg, var(--spotify-green-bright) 0%, var(--spotify-green) 100%);
+  color: var(--spotify-on-green);
+  border: 1px solid rgba(var(--spotify-green-rgb), 0.20);
+  box-shadow: 0 10px 36px rgba(var(--spotify-green-rgb), 0.22);
+}
+.spotify-gradient-hover {
+  background-image: linear-gradient(90deg, var(--spotify-green-accent) 0%, var(--spotify-green-bright) 60%, var(--spotify-green) 100%);
+  transform: translateY(-2px) scale(1.01);
+  box-shadow: 0 16px 44px rgba(var(--spotify-green-rgb), 0.28);
+}
+.spotify-gradient-vertical {
+  background-image: linear-gradient(180deg, var(--spotify-green-bright) 0%, var(--spotify-green) 100%);
+  box-shadow: 0 8px 28px rgba(var(--spotify-green-rgb), 0.14);
+}
+.text-spotify-on-green {
+  color: var(--spotify-on-green) !important;
+}
+.text-spotify-accent {
+  color: var(--spotify-green-bright) !important;
+}
+
+.text-spotify-accent {
+  color: var(--spotify-green-bright) !important;
+}
+
+/* Glowing decorative blurs */
+.spotify-glow-left-light {
+  background: radial-gradient(circle at 10% 10%, rgba(var(--spotify-green-rgb), var(--spotify-glow-strong)), transparent 32%);
+}
+.spotify-glow-left-dark {
+  background: radial-gradient(circle at 10% 10%, rgba(var(--spotify-green-rgb), 0.34), transparent 32%);
+}
+.spotify-glow-right-light {
+  background: radial-gradient(circle at 70% 40%, rgba(var(--spotify-green-rgb), 0.18), transparent 30%);
+}
+.spotify-glow-right-dark {
+  background: radial-gradient(circle at 70% 40%, rgba(var(--spotify-green-rgb), 0.24), transparent 30%);
+}
+
+/* Accent panels for stat cards */
+.spotify-accent-panel {
+  border-color: rgba(var(--spotify-green-rgb), 0.36);
+  background: linear-gradient(180deg, rgba(var(--spotify-green-rgb), 0.14), rgba(var(--spotify-green-rgb), 0.06));
+  box-shadow: 0 12px 40px rgba(var(--spotify-green-rgb), 0.12);
+}
+.spotify-accent-panel-dark {
+  border-color: rgba(var(--spotify-green-rgb), 0.44);
+  background: linear-gradient(180deg, rgba(var(--spotify-green-rgb), 0.18), rgba(var(--spotify-green-rgb), 0.10));
+  box-shadow: 0 14px 48px rgba(var(--spotify-green-rgb), 0.16);
+}
+
+/* Panel backgrounds */
+.spotify-panel-light {
+  background: linear-gradient(180deg, rgba(255,255,255,0.98), rgba(var(--spotify-green-rgb), 0.03));
+  border: 1px solid rgba(var(--spotify-green-rgb), 0.04);
+}
+.spotify-panel-dark {
+  background: linear-gradient(180deg, rgba(18,18,18,0.78), rgba(var(--spotify-green-rgb), 0.06));
+  border: 1px solid rgba(var(--spotify-green-rgb), 0.06);
+}
+
+/* Drag-over targets */
+.bg-spotify-drag-light {
+  background: linear-gradient(90deg, rgba(var(--spotify-green-rgb), 0.12), rgba(var(--spotify-green-rgb), 0.06)) !important;
+  box-shadow: 0 10px 30px rgba(var(--spotify-green-rgb), 0.10);
+}
+.bg-spotify-drag-dark {
+  background: linear-gradient(90deg, rgba(var(--spotify-green-rgb), 0.18), rgba(var(--spotify-green-rgb), 0.10)) !important;
+  box-shadow: 0 12px 36px rgba(var(--spotify-green-rgb), 0.16);
+}
+
+
+/* Group collapse/expand animations */
+.group-content {
+  overflow: hidden;
+  transition: max-height var(--ui-duration) var(--ui-ease), background var(--ui-duration) var(--ui-ease);
+  will-change: max-height, opacity, transform;
+}
+
+.group-inner {
+  transition: opacity calc(var(--ui-duration) / 1.1) var(--ui-ease), transform calc(var(--ui-duration) / 1.1) var(--ui-ease);
+  transform-origin: top;
+  will-change: opacity, transform;
+}
+
+

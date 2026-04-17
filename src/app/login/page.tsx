@@ -120,7 +120,7 @@ export default function LoginPage() {
           {isSignUp ? "Create an account" : "Sign in to your account"}
         </p>
 
-        <p className="mt-4 rounded-md bg-emerald-500/10 px-3 py-2 text-center text-xs text-emerald-600">
+        <p className="mt-4 rounded-md spotify-accent-panel px-3 py-2 text-center text-xs text-spotify-accent">
           Supabase connected - cloud sync enabled.
         </p>
 
@@ -179,7 +179,7 @@ export default function LoginPage() {
             <button
               type="submit"
               disabled={isSubmitting}
-              className="w-full rounded-lg bg-blue-500 px-3 py-3 text-sm font-semibold text-white disabled:opacity-60"
+              className="w-full rounded-lg spotify-gradient px-3 py-3 text-sm font-semibold text-white disabled:opacity-60"
             >
               {isSubmitting ? "Please wait..." : isSignUp ? "Sign Up" : "Sign In"}
             </button>
@@ -194,7 +194,7 @@ export default function LoginPage() {
                 setShowPassword(false);
                 setError(null);
               }}
-              className="font-semibold text-blue-500"
+              className="font-semibold text-spotify-accent"
             >
               {isSignUp ? "Sign In" : "Sign Up"}
             </button>
