@@ -4,6 +4,8 @@ const CORE_ASSETS = [
   "/login",
   "/tasks",
   "/manifest.webmanifest",
+  "/favicon.svg",
+  "/icons/app-icon.svg",
   "/icons/icon-192.png",
   "/icons/icon-512.png"
 ];

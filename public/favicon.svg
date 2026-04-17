@@ -1,0 +1,129 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  DailyTracker App Icon
+  Design: Asymmetric Ascending Check on Spotify Green
+  One mark. Maximum impact. Reads at every size from 16px to 1024px.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <!--
+      BACKGROUND: 3-stop directional gradient.
+      Light source is top-left; deepens toward bottom-right.
+      The middle stop anchors the canonical Spotify green so the
+      overall impression is unmistakably on-brand.
+    -->
+    <linearGradient id="bg" x1="0.06" y1="0.04" x2="0.88" y2="0.96">
+      <stop offset="0%"  stop-color="#24e46e"/>
+      <stop offset="42%" stop-color="#1DB954"/>
+      <stop offset="100%" stop-color="#0e8c3b"/>
+    </linearGradient>
+
+    <!--
+      VIGNETTE: Radial darkening from edges inward.
+      Adds the depth you see on premium physical objects
+      (like the face of a watch or a matte-finish product box).
+    -->
+    <radialGradient id="vin" cx="50%" cy="47%" r="56%">
+      <stop offset="0%"   stop-color="#000" stop-opacity="0"/>
+      <stop offset="82%"  stop-color="#000" stop-opacity="0.03"/>
+      <stop offset="100%" stop-color="#000" stop-opacity="0.20"/>
+    </radialGradient>
+
+    <!--
+      AMBIENT GLOW: Soft white halo centered slightly above-center
+      (where the mark vertex sits) to draw the eye.
+    -->
+    <radialGradient id="amb" cx="46%" cy="44%" r="26%">
+      <stop offset="0%"   stop-color="#fff" stop-opacity="0.12"/>
+      <stop offset="100%" stop-color="#fff" stop-opacity="0"/>
+    </radialGradient>
+
+    <!--
+      MARK FILL: Near-pure white that drifts to a barely-there
+      mint at the tail end — adds warmth without being obvious.
+    -->
+    <linearGradient id="mk" x1="0.12" y1="0.08" x2="0.92" y2="0.88">
+      <stop offset="0%"   stop-color="#ffffff"/>
+      <stop offset="100%" stop-color="#e6fff2"/>
+    </linearGradient>
+
+    <!--
+      MARK SHADOW: Tinted green (not black) so the shadow
+      feels like it belongs to the surface, not pasted on.
+    -->
+    <filter id="ms" x="-20%" y="-15%" width="140%" height="150%">
+      <feDropShadow dx="0" dy="12" stdDeviation="20"
+                    flood-color="#06522a" flood-opacity="0.48"/>
+    </filter>
+
+    <!--
+      OVERHEAD GLOSS: A half-canvas gradient that simulates
+      light catching the top face of a curved glass surface.
+    -->
+    <linearGradient id="gl" x1="0.5" y1="0" x2="0.5" y2="0.54">
+      <stop offset="0%"   stop-color="#fff" stop-opacity="0.08"/>
+      <stop offset="100%" stop-color="#fff" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+
+  <!-- ============================================================
+       LAYER 1 — BACKGROUND SLAB
+       Rounded super-ellipse. rx 230 matches modern iOS/Android.
+       ============================================================ -->
+  <rect width="1024" height="1024" rx="230" fill="url(#bg)"/>
+
+  <!-- LAYER 2 — EDGE VIGNETTE -->
+  <rect width="1024" height="1024" rx="230" fill="url(#vin)"/>
+
+  <!-- LAYER 3 — AMBIENT GLOW (behind the mark) -->
+  <circle cx="490" cy="466" r="290" fill="url(#amb)"/>
+
+  <!-- ============================================================
+       LAYER 4 — THE HERO MARK: "Ascending Check"
+
+       What makes it unique:
+       ·  Left downstroke  ≈ 180 px  (short, grounding)
+       ·  Right upstroke   ≈ 500 px  (long, soaring)
+       ·  Ratio 1 : 2.8 — deliberately dramatic & asymmetric.
+           Most checkmarks are ~1:1.  This one MOVES.
+       ·  Reads as completion (✓) AND upward momentum.
+       ·  80 px stroke with round caps = bold & friendly.
+       ·  Optically centered (shifted slightly above true center
+           so it *feels* centered to the human eye).
+
+       Brushstroke emboss:
+       A slightly offset, wider, semi-transparent copy behind
+       the main stroke gives a hand-crafted dimensional quality
+       — like ink pressed into premium paper.
+       ============================================================ -->
+
+  <!-- 4a. Brushstroke emboss (wider, offset, transparent) -->
+  <g filter="url(#ms)">
+    <path
+      d="M308 534 L442 668 L738 310"
+      fill="none"
+      stroke="#ffffff"
+      stroke-width="96"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+      opacity="0.10"
+    />
+
+    <!-- 4b. Primary stroke -->
+    <path
+      d="M308 530 L440 662 L736 308"
+      fill="none"
+      stroke="url(#mk)"
+      stroke-width="80"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+    />
+  </g>
+
+  <!-- ============================================================
+       LAYER 5 — OVERHEAD GLOSS
+       Covers top ~52% of the icon. Creates the "lit from above"
+       finish seen on premium app icons (Apple Music, etc.).
+       ============================================================ -->
+  <rect width="1024" height="1024" rx="230" fill="url(#gl)"/>
+</svg>

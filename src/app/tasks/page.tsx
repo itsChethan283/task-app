@@ -748,7 +748,8 @@ export default function TasksPage() {
 
   const getTaskTextClass = (task: Task) => {
     if (task.is_complete) {
-      return isDarkMode ? "text-slate-500 line-through" : "text-slate-400 line-through";
+      // Use muted Spotify green for completed tasks instead of blue/gray tints.
+      return isDarkMode ? "text-emerald-300 line-through" : "text-emerald-700 line-through";
     }
 
     const darkClasses = ["text-slate-300", "text-slate-200", "text-slate-100", "text-white", "text-white"];
@@ -779,7 +780,8 @@ export default function TasksPage() {
 
     let priorityBg = "";
     if (isTaskComplete) {
-      priorityBg = isDarkMode ? "bg-slate-800/70 opacity-70" : "bg-slate-200/70 opacity-80";
+      // Completed tasks: use Spotify-themed muted panel backgrounds.
+      priorityBg = isDarkMode ? "spotify-panel-dark opacity-70" : "spotify-panel-light opacity-80";
     } else {
       if (isDarkMode) {
         // Dark mode uses Spotify-like green intensity steps.
@@ -1029,8 +1031,7 @@ export default function TasksPage() {
               <h1 className={`header-title text-5xl font-bold ${shellText}`}>Tasks</h1>
               <p className={`mt-1 text-lg ${mutedText}`}>Welcome, {username}</p>
               <p className={`mt-0 text-sm ${isDarkMode ? "text-slate-500" : "text-slate-400"}`}>
-                <span className="mr-3">Task color intensity indicates priority.</span>
-                <span>Signed in as {user?.email}</span>
+                <span className="mr-3">#'s increase priority</span>
               </p>
             </div>
 
@@ -1061,7 +1062,7 @@ export default function TasksPage() {
             </button>
             <button
               onClick={handleSignOut}
-              className="rounded-xl bg-gradient-to-r from-rose-500 to-red-500 px-4 py-2 text-sm font-semibold text-white shadow-md transition hover:-translate-y-0.5 hover:from-rose-400 hover:to-red-400 hover:shadow-lg"
+              className="rounded-xl spotify-gradient px-4 py-2 text-sm font-semibold text-spotify-on-green shadow-md transition hover:-translate-y-0.5 hover:spotify-gradient-hover hover:shadow-lg"
             >
               Logout
             </button>
@@ -1077,7 +1078,7 @@ export default function TasksPage() {
         <div className="grid gap-8 md:grid-cols-[minmax(0,2.35fr)_minmax(280px,0.9fr)]">
           <section className="flex flex-col gap-4">
             <h2 className={`flex items-center gap-2 text-2xl font-bold ${shellText}`}>
-              <span className="h-8 w-1 rounded spotify-gradient-vertical" />Tasks
+              
             </h2>
 
             {showGroupInput ? (
