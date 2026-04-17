@@ -1,4 +1,4 @@
-const CACHE_NAME = "dailytracker-v1";
+const CACHE_NAME = "dailytracker-v2";
 const CORE_ASSETS = [
   "/",
   "/login",
